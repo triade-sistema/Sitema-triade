@@ -112,9 +112,24 @@ const EMPTY_DATA = {
   contasReceber: [],
   extrato: [],
   ajustes: [],
+  ferias: [],
+  trabalhadores: [],
   saldoInicial: { valor: 0, data: todayStr() },
   __v: 2,
 };
+
+const DOCS_ADMISSAO_PADRAO = [
+  "RG e CPF", "Carteira de Trabalho (CTPS)", "Comprovante de residência",
+  "Exame médico admissional (ASO)", "PIS/PASEP", "Título de eleitor",
+  "Contrato de trabalho assinado", "Ficha de registro de empregado",
+];
+const DOCS_DEMISSAO_PADRAO = [
+  "Aviso prévio", "Exame médico demissional (ASO)", "Termo de Rescisão do Contrato de Trabalho (TRCT)",
+  "Guia de recolhimento rescisório do FGTS (GRRF)", "Chave de conectividade social / comunicação de dispensa",
+  "Extrato do FGTS", "Guia do seguro-desemprego (se aplicável)", "Homologação sindical (se exigida)",
+];
+function novoChecklist(lista) { return lista.map((nome) => ({ id: uid(), nome: nome, feito: false })); }
+
 
 function migrate(raw) {
   if (!raw) return JSON.parse(JSON.stringify(EMPTY_DATA));
@@ -127,6 +142,8 @@ function migrate(raw) {
       contasReceber: raw.contasReceber || [],
       extrato: raw.extrato || [],
       ajustes: raw.ajustes || [],
+      ferias: raw.ferias || [],
+      trabalhadores: raw.trabalhadores || [],
       saldoInicial: raw.saldoInicial || { valor: 0, data: todayStr() },
     });
   }
@@ -326,6 +343,9 @@ let UI = {
   relTipo: "pagar",
   folhaMonth: new Date().getMonth(),
   folhaYear: new Date().getFullYear(),
+  fixoSub: "funcionarios",
+  feriasCalMonth: new Date().getMonth(),
+  feriasCalYear: new Date().getFullYear(),
   modal: null,
 };
 let RECIBO_ATUAL = null;
@@ -388,16 +408,38 @@ function formObra() {
 
 function formFuncionarioObra() {
   return (
-    fieldWrap("Nome", '<input class="fin-input" id="f-nome">') +
+    fieldWrap("Nome", '<input class="fin-input" id="f-nome" list="trabalhadores-datalist" placeholder="Digite ou escolha um trabalhador já cadastrado">' +
+      '<datalist id="trabalhadores-datalist">' + STATE.trabalhadores.map((t) => '<option value="' + esc(t.nome) + '">').join("") + '</datalist>') +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
     fieldWrap("Tipo de valor", '<select class="fin-input" id="f-tipoValor"><option value="mensal">Mensal</option><option value="semanal">Semanal</option></select>') +
     fieldWrap("Valor (R$)", '<input class="fin-input" type="number" id="f-valor">') + '</div>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
     fieldWrap("Transporte (R$/mês)", '<input class="fin-input" type="number" id="f-transporte">') +
     fieldWrap("Outros custos (R$/mês)", '<input class="fin-input" type="number" id="f-outros">') + '</div>' +
+    '<div style="font-size:11px;color:var(--ink-soft);margin:-8px 0 14px">Trabalhadores já cadastrados aparecem como sugestão ao digitar — evita cadastrar a mesma pessoa de novo em outra obra.</div>' +
     '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
     '<button class="fin-btn fin-btn-ghost" data-action="close-modal">Cancelar</button>' +
     '<button class="fin-btn fin-btn-accent" data-action="submit-funcionario-obra">Adicionar</button></div>'
+  );
+}
+
+function renderTrabalhadoresModalBody() {
+  const lista = STATE.trabalhadores || [];
+  const rows = lista.length === 0 ? '<div style="font-size:13px;color:var(--ink-soft);padding:8px 0">Nenhum trabalhador cadastrado ainda. Trabalhadores adicionados em obras entram aqui automaticamente.</div>' :
+    '<table class="fin-table"><thead><tr><th>Nome</th><th>Documento</th><th>Telefone</th><th></th></tr></thead><tbody>' +
+    lista.map((t) => '<tr><td style="font-weight:600">' + esc(t.nome) + '</td><td>' + esc(t.documento || "—") + '</td><td>' + esc(t.telefone || "—") + '</td>' +
+      '<td style="text-align:right"><button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="remove-trabalhador" data-id="' + t.id + '">' + icon("trash", 13) + '</button></td></tr>').join("") + '</tbody></table>';
+  return (
+    '<div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px">Cadastro reutilizável de trabalhadores de obra. Ao encerrar uma obra e contratar o mesmo trabalhador em outra, é só escolher o nome na lista ao cadastrá-lo — sem digitar tudo de novo.</div>' +
+    rows +
+    '<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--line)">' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end">' +
+    fieldWrap("Nome", '<input class="fin-input" id="f-trabNome">') +
+    fieldWrap("Documento", '<input class="fin-input" id="f-trabDocumento">') +
+    fieldWrap("Telefone", '<input class="fin-input" id="f-trabTelefone">') + '</div>' +
+    '<div style="display:flex;justify-content:flex-end;margin-bottom:16px">' +
+    '<button class="fin-btn fin-btn-accent fin-btn-sm" data-action="submit-trabalhador">' + icon("plus", 13) + ' Adicionar</button></div></div>' +
+    '<div style="display:flex;justify-content:flex-end"><button class="fin-btn fin-btn-ghost" data-action="close-modal">Fechar</button></div>'
   );
 }
 
@@ -685,12 +727,23 @@ function renderDashboard() {
   const atrasadasPagar = STATE.contasPagar.filter((c) => getContaStatus(c, "pagar") === "atrasado");
   const atrasadasReceber = STATE.contasReceber.filter((c) => getContaStatus(c, "receber") === "atrasado");
 
+  const hojeD = new Date();
+  const proxMesRef = hojeD.getMonth() === 11 ? 0 : hojeD.getMonth() + 1;
+  const proxAnoRef = hojeD.getMonth() === 11 ? hojeD.getFullYear() + 1 : hojeD.getFullYear();
+  const feriasAvisos = [];
+  (STATE.ferias || []).forEach((fe) => (fe.periodos || []).forEach((p) => {
+    if (!p.dataInicio) return;
+    const ym = ymOf(p.dataInicio);
+    if (ym[0] === proxAnoRef && ym[1] === proxMesRef) feriasAvisos.push({ nome: fe.funcionarioNome, data: p.dataInicio });
+  }));
+
   let alertHtml = "";
-  if (atrasadasPagar.length || atrasadasReceber.length || vencendoPagar.length) {
+  if (atrasadasPagar.length || atrasadasReceber.length || vencendoPagar.length || feriasAvisos.length) {
     let items = "";
     if (atrasadasPagar.length) items += "<li><strong style='color:var(--negative)'>" + atrasadasPagar.length + "</strong> conta(s) a pagar em atraso</li>";
     if (atrasadasReceber.length) items += "<li><strong style='color:var(--negative)'>" + atrasadasReceber.length + "</strong> conta(s) a receber em atraso</li>";
     if (vencendoPagar.length) items += "<li><strong>" + vencendoPagar.length + "</strong> conta(s) a pagar vencendo nos próximos 7 dias</li>";
+    feriasAvisos.forEach((a) => { items += "<li>Funcionário <strong>" + esc(a.nome) + "</strong> sairá de férias em <strong>" + fmtDate(a.data) + "</strong></li>"; });
     alertHtml = '<div class="fin-card" style="padding:14px 18px;margin-bottom:18px;border-left:4px solid var(--warn)">' +
       '<div style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;margin-bottom:6px">' + icon("alertTriangle", 16) + ' Alertas</div>' +
       '<ul style="margin:0;padding-left:20px;font-size:13px;color:var(--ink-soft)">' + items + '</ul></div>';
@@ -740,7 +793,9 @@ function renderObrasList() {
 
   return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">' +
     '<h2 class="fin-display" style="font-size:20px;font-weight:600">Obras</h2>' +
-    '<button class="fin-btn fin-btn-accent" data-action="open-modal-nova-obra">' + icon("plus", 15) + ' Nova obra</button></div>' +
+    '<div style="display:flex;gap:8px">' +
+    '<button class="fin-btn fin-btn-ghost" data-action="open-modal-trabalhadores">' + icon("users", 14) + ' Trabalhadores cadastrados</button>' +
+    '<button class="fin-btn fin-btn-accent" data-action="open-modal-nova-obra">' + icon("plus", 15) + ' Nova obra</button></div></div>' +
     '<div class="fin-card" style="margin-bottom:20px"><div style="padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600;font-size:13px">Ativas (' + ativas.length + ')</div>' + rowsAtivas() + '</div>' +
     rowsEncerradas();
 }
@@ -795,24 +850,189 @@ function renderObraDetail(obraId) {
 
 /* ================= Equipe Fixa ================= */
 function somaCustosAdicionais(f) { return (f.custosAdicionais || []).reduce((s, c) => s + (Number(c.valor) || 0), 0); }
+function fixoTemPendencia(f) {
+  const pendAdmissao = (f.documentosAdmissao || []).some((d) => !d.feito);
+  const pendDemissao = f.demissao && (f.demissao.documentos || []).some((d) => !d.feito);
+  return pendAdmissao || pendDemissao;
+}
+function fixoSituacao(f) { return f.demissao ? "encerrada" : (f.ativo ? "ativa" : "encerrada"); }
 
-function renderFixos() {
+/* ---------- Checklist (admissão / demissão) ---------- */
+function renderChecklistModalBody(fixoId, tipo) {
+  const f = STATE.fixos.find((x) => x.id === fixoId);
+  if (!f) return "";
+  const lista = tipo === "demissao" ? ((f.demissao && f.demissao.documentos) || []) : (f.documentosAdmissao || []);
+  const pendentes = lista.filter((d) => !d.feito).length;
+  const itens = lista.length === 0 ? '<div style="font-size:13px;color:var(--ink-soft);padding:8px 0">Nenhum item cadastrado.</div>' :
+    lista.map((d) => '<label style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13.5px;cursor:pointer">' +
+      '<input type="checkbox" ' + (d.feito ? "checked" : "") + ' data-action="toggle-checklist-item" data-tipo="' + tipo + '" data-fixoid="' + fixoId + '" data-itemid="' + d.id + '" style="width:16px;height:16px;accent-color:var(--accent)">' +
+      '<span style="' + (d.feito ? "color:var(--ink-soft);text-decoration:line-through" : "") + '">' + esc(d.nome) + '</span></label>').join("");
+  return (
+    '<div style="font-size:13px;color:var(--ink-soft);margin-bottom:6px">' + esc(f.nome) + ' — ' + (tipo === "demissao" ? "Checklist de desligamento" : "Checklist de admissão") + '</div>' +
+    (pendentes > 0 ? '<div style="background:#FCF3DF;color:var(--warn);padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:12px">' + pendentes + ' pendência(s)</div>' :
+      '<div style="background:var(--accent-soft);color:var(--accent-dark);padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:12px">Tudo certo — nenhuma pendência.</div>') +
+    '<div>' + itens + '</div>' +
+    '<div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="fin-btn fin-btn-ghost" data-action="close-modal">Fechar</button></div>'
+  );
+}
+
+function formDemitir(fixoId) {
+  const f = STATE.fixos.find((x) => x.id === fixoId);
+  return (
+    '<p style="font-size:13px;color:var(--ink-soft);margin-bottom:14px">Registrar desligamento de <strong>' + esc(f ? f.nome : "") + '</strong>. Um checklist de documentos de rescisão será criado.</p>' +
+    fieldWrap("Data do desligamento", '<input class="fin-input" type="date" id="f-demissaoData" value="' + todayStr() + '">') +
+    fieldWrap("Motivo", '<select class="fin-input" id="f-demissaoMotivo"><option>Dispensa sem justa causa</option><option>Pedido de demissão</option><option>Dispensa com justa causa</option><option>Término de contrato</option><option>Acordo (art. 484-A)</option><option>Outro</option></select>') +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+    '<button class="fin-btn fin-btn-ghost" data-action="close-modal">Cancelar</button>' +
+    '<button class="fin-btn fin-btn-danger" style="background:var(--negative);color:white;border:none" data-action="submit-demitir" data-id="' + fixoId + '">Confirmar desligamento</button></div>'
+  );
+}
+
+function renderFuncionariosDP() {
   const rows = STATE.fixos.length === 0 ? emptyState("users", "Nenhum funcionário fixo cadastrado.") :
-    '<table class="fin-table"><thead><tr><th>Nome</th><th>Cargo</th><th>Salário</th><th>Custos extras</th><th>Total/mês</th><th>Início</th><th>Status</th><th></th></tr></thead><tbody>' +
+    '<table class="fin-table"><thead><tr><th>Nome</th><th>Cargo</th><th>Salário</th><th>Total/mês</th><th>Início</th><th>Situação</th><th></th></tr></thead><tbody>' +
     STATE.fixos.map((f) => {
       const extras = somaCustosAdicionais(f);
+      const situacao = fixoSituacao(f);
+      const pendente = fixoTemPendencia(f);
+      const checklistTipo = f.demissao ? "demissao" : "admissao";
       return '<tr><td style="font-weight:600">' + esc(f.nome) + '</td><td>' + esc(f.cargo || "—") + '</td><td>' + fmtBRL(f.salario) + '</td>' +
-      '<td>' + fmtBRL(extras) + (f.custosAdicionais && f.custosAdicionais.length ? ' <span style="color:var(--ink-soft);font-weight:400">(' + f.custosAdicionais.length + ')</span>' : '') + '</td>' +
       '<td style="font-weight:700">' + fmtBRL((Number(f.salario) || 0) + extras) + '</td>' +
-      '<td>' + fmtDate(f.dataInicio) + '</td><td><span class="fin-badge ' + (f.ativo ? "fin-badge-ativa" : "fin-badge-encerrada") + '" style="cursor:pointer" data-action="toggle-fixo" data-id="' + f.id + '">' + (f.ativo ? "Ativo" : "Inativo") + '</span></td>' +
-      '<td style="text-align:right;white-space:nowrap"><button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="open-modal-custos-fixo" data-id="' + f.id + '">Custos</button>' +
+      '<td>' + fmtDate(f.dataInicio) + '</td>' +
+      '<td>' + (f.demissao ? '<span class="fin-badge fin-badge-encerrada">Demitido em ' + fmtDate(f.demissao.data) + '</span>' : '<span class="fin-badge ' + (f.ativo ? "fin-badge-ativa" : "fin-badge-encerrada") + '" style="cursor:pointer" data-action="toggle-fixo" data-id="' + f.id + '">' + (f.ativo ? "Ativo" : "Inativo") + '</span>') +
+      (pendente ? ' <span class="fin-badge fin-badge-pendente" style="cursor:pointer;margin-left:4px" data-action="open-modal-checklist" data-id="' + f.id + '" data-tipo="' + checklistTipo + '">' + icon("alertTriangle", 11) + ' Pendência</span>' : '') +
+      '</td>' +
+      '<td style="text-align:right;white-space:nowrap">' +
+      '<button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="open-modal-checklist" data-id="' + f.id + '" data-tipo="' + checklistTipo + '">Checklist</button>' +
+      '<button class="fin-btn fin-btn-ghost fin-btn-sm" style="margin-left:6px" data-action="open-modal-custos-fixo" data-id="' + f.id + '">Custos</button>' +
+      (!f.demissao ? '<button class="fin-btn fin-btn-danger fin-btn-sm" style="margin-left:6px" data-action="open-modal-demitir" data-id="' + f.id + '">Demissão</button>' : '') +
       '<button class="fin-btn fin-btn-ghost fin-btn-sm" style="margin-left:6px" data-action="remove-fixo" data-id="' + f.id + '">' + icon("trash", 13) + '</button></td></tr>';
     }).join("") + '</tbody></table>';
   return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">' +
-    '<h2 class="fin-display" style="font-size:20px;font-weight:600">Equipe fixa</h2>' +
+    '<div style="font-size:13px;color:var(--ink-soft)">Cadastro, admissão, desligamento e custos da equipe fixa.</div>' +
     '<button class="fin-btn fin-btn-accent" data-action="open-modal-novo-fixo">' + icon("plus", 15) + ' Novo funcionário</button></div>' +
     '<div class="fin-card">' + rows + '</div>' +
-    '<div style="font-size:12px;color:var(--ink-soft);margin-top:10px">Salário e custos extras marcados aqui (vale-transporte, vale-refeição, benefícios, etc.) viram automaticamente lançamentos recorrentes em Contas a Pagar todo mês, sem precisar lançar manualmente.</div>';
+    '<div style="font-size:12px;color:var(--ink-soft);margin-top:10px">Salário e custos extras viram lançamentos recorrentes em Contas a Pagar automaticamente. O selo "Pendência" indica documentos de admissão ou desligamento ainda não marcados como concluídos — clique para ver e resolver.</div>';
+}
+
+/* ---------- Férias (CLT art. 134) ---------- */
+function feriasValidar(periodos, abonoDias) {
+  if (periodos.length === 0) return "Informe ao menos um período de férias.";
+  if (periodos.length > 3) return "As férias podem ser divididas em no máximo 3 períodos (CLT art. 134).";
+  const maior = periodos.some((p) => p.dias >= 14);
+  if (!maior) return "Um dos períodos precisa ter no mínimo 14 dias corridos (CLT art. 134, §1º).";
+  const menores = periodos.filter((p) => p.dias < 14);
+  if (menores.some((p) => p.dias < 5)) return "Os demais períodos precisam ter no mínimo 5 dias corridos cada (CLT art. 134, §1º).";
+  const totalDias = periodos.reduce((s, p) => s + p.dias, 0) + (abonoDias || 0);
+  if (totalDias !== 30) return "A soma dos períodos + dias de abono deve totalizar 30 dias. Total informado: " + totalDias + ".";
+  if (abonoDias && abonoDias > 10) return "O abono pecuniário não pode exceder 10 dias (1/3 das férias — CLT art. 143).";
+  return null;
+}
+
+function formFerias() {
+  const ativos = STATE.fixos.filter((f) => !f.demissao);
+  if (ativos.length === 0) {
+    return '<div style="font-size:13px;color:var(--ink-soft)">Nenhum funcionário ativo cadastrado.</div>' +
+      '<div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="fin-btn fin-btn-ghost" data-action="close-modal">Fechar</button></div>';
+  }
+  return (
+    fieldWrap("Funcionário", '<select class="fin-input" id="f-feriasFixoId">' + ativos.map((f) => '<option value="' + f.id + '">' + esc(f.nome) + '</option>').join("") + '</select>') +
+    '<div class="fin-label" style="margin-top:14px">Períodos (art. 134 CLT — até 3 períodos; um deles com no mínimo 14 dias, os demais com no mínimo 5)</div>' +
+    [1, 2, 3].map((n) => '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:8px">' +
+      fieldWrap("Período " + n + " — dias" + (n === 1 ? "" : " (0 se não usar)"), '<input class="fin-input" type="number" id="f-feriasDias' + n + '" value="' + (n === 1 ? 30 : 0) + '">') +
+      fieldWrap("Início do período " + n, '<input class="fin-input" type="date" id="f-feriasInicio' + n + '">') + '</div>').join("") +
+    '<div style="margin-top:10px;padding-top:14px;border-top:1px solid var(--line)">' +
+    '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:10px"><input type="checkbox" id="f-feriasAbono" onchange="document.getElementById(\'abono-campos\').style.display=this.checked?\'grid\':\'none\'"> Abono pecuniário (venda de parte das férias — máx. 10 dias, CLT art. 143)</label>' +
+    '<div id="abono-campos" style="display:none;grid-template-columns:1fr 1fr;gap:12px">' +
+    fieldWrap("Dias vendidos", '<input class="fin-input" type="number" id="f-feriasAbonoDias" max="10">') +
+    fieldWrap("Valor do abono (R$)", '<input class="fin-input" type="number" id="f-feriasAbonoValor">') +
+    '</div></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+    '<button class="fin-btn fin-btn-ghost" data-action="close-modal">Cancelar</button>' +
+    '<button class="fin-btn fin-btn-accent" data-action="submit-ferias">Agendar férias</button></div>'
+  );
+}
+
+function renderCalendarioFerias(year, month) {
+  const first = new Date(year, month, 1);
+  const startWeekday = first.getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const eventos = {};
+  (STATE.ferias || []).forEach((fe) => {
+    (fe.periodos || []).forEach((p) => {
+      if (!p.dataInicio) return;
+      const ini = new Date(p.dataInicio + "T00:00:00");
+      for (let i = 0; i < p.dias; i++) {
+        const d = new Date(ini); d.setDate(d.getDate() + i);
+        if (d.getFullYear() === year && d.getMonth() === month) {
+          const key = d.getDate();
+          (eventos[key] = eventos[key] || []).push(fe.funcionarioNome);
+        }
+      }
+    });
+  });
+  let cells = "";
+  for (let i = 0; i < startWeekday; i++) cells += '<div style="min-height:64px"></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const nomes = eventos[d] || [];
+    cells += '<div style="min-height:64px;border:1px solid var(--line);border-radius:8px;padding:6px;background:' + (nomes.length ? "var(--accent-soft)" : "var(--surface)") + '">' +
+      '<div style="font-size:11px;color:var(--ink-soft);font-weight:600">' + d + '</div>' +
+      nomes.slice(0, 2).map((n) => '<div style="font-size:10px;color:var(--accent-dark);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(n) + '</div>').join("") +
+      (nomes.length > 2 ? '<div style="font-size:10px;color:var(--ink-soft)">+' + (nomes.length - 2) + '</div>' : "") + '</div>';
+  }
+  const semanas = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+  return '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px">' +
+    semanas.map((s) => '<div style="font-size:11px;font-weight:700;color:var(--ink-soft);text-align:center">' + s + '</div>').join("") + '</div>' +
+    '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">' + cells + '</div>';
+}
+
+function renderFeriasTab() {
+  const year = UI.feriasCalYear, month = UI.feriasCalMonth;
+  const hoje = new Date();
+  const proximoMesRef = hoje.getMonth() === 11 ? 0 : hoje.getMonth() + 1;
+  const proximoAnoRef = hoje.getMonth() === 11 ? hoje.getFullYear() + 1 : hoje.getFullYear();
+  const avisos = [];
+  (STATE.ferias || []).forEach((fe) => {
+    (fe.periodos || []).forEach((p) => {
+      if (!p.dataInicio) return;
+      const ym = ymOf(p.dataInicio);
+      if (ym[0] === proximoAnoRef && ym[1] === proximoMesRef) avisos.push({ nome: fe.funcionarioNome, data: p.dataInicio });
+    });
+  });
+
+  const listaRows = (STATE.ferias || []).length === 0 ? emptyState("wallet", "Nenhuma férias agendada ainda.") :
+    '<table class="fin-table"><thead><tr><th>Funcionário</th><th>Períodos</th><th>Abono</th><th></th></tr></thead><tbody>' +
+    STATE.ferias.map((fe) => {
+      const periodosTxt = (fe.periodos || []).map((p) => p.dias + " dias a partir de " + fmtDate(p.dataInicio)).join(" · ");
+      return '<tr><td style="font-weight:600">' + esc(fe.funcionarioNome) + '</td><td style="font-size:12.5px">' + esc(periodosTxt) + '</td>' +
+        '<td>' + (fe.abono && fe.abono.ativado ? fe.abono.dias + " dias — " + fmtBRL(fe.abono.valor) : "—") + '</td>' +
+        '<td style="text-align:right"><button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="remove-ferias" data-id="' + fe.id + '">' + icon("trash", 13) + '</button></td></tr>';
+    }).join("") + '</tbody></table>';
+
+  return (
+    (avisos.length > 0 ? '<div class="fin-card" style="padding:14px 18px;margin-bottom:18px;border-left:4px solid var(--warn)">' +
+      '<div style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;margin-bottom:6px">' + icon("alertTriangle", 16) + ' Avisos de férias do próximo mês</div>' +
+      '<ul style="margin:0;padding-left:20px;font-size:13px;color:var(--ink-soft)">' +
+      avisos.map((a) => '<li>Funcionário <strong>' + esc(a.nome) + '</strong> sairá de férias em <strong>' + fmtDate(a.data) + '</strong></li>').join("") + '</ul></div>' : "") +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">' +
+    '<div style="font-size:13px;color:var(--ink-soft)">Agendamento de férias conforme CLT art. 134 (até 3 períodos) e art. 143 (abono pecuniário).</div>' +
+    '<button class="fin-btn fin-btn-accent" data-action="open-modal-ferias">' + icon("plus", 15) + ' Agendar férias</button></div>' +
+    '<div class="fin-card" style="padding:18px;margin-bottom:18px">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">' +
+    '<div style="font-weight:600;font-size:13px">Calendário — ' + MONTHS_FULL[month] + " " + year + '</div>' +
+    '<div style="display:flex;gap:8px"><button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="ferias-cal-prev">' + icon("chevronLeft", 14) + '</button>' +
+    '<button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="ferias-cal-next">' + icon("chevronRight", 14) + '</button></div></div>' +
+    renderCalendarioFerias(year, month) + '</div>' +
+    sectionCard("Férias agendadas", "", listaRows)
+  );
+}
+
+const FIXO_SUBTABS = [{ id: "funcionarios", label: "Funcionários" }, { id: "ferias", label: "Férias" }];
+function EquipeFixaTab() {
+  const pills = FIXO_SUBTABS.map((t) => '<button class="fin-pill ' + (UI.fixoSub === t.id ? "active" : "") + '" data-action="fixo-sub" data-id="' + t.id + '">' + t.label + '</button>').join("");
+  return '<h2 class="fin-display" style="font-size:20px;font-weight:600;margin-bottom:14px">Equipe fixa — Departamento Pessoal</h2>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">' + pills + '</div>' +
+    (UI.fixoSub === "ferias" ? renderFeriasTab() : renderFuncionariosDP());
 }
 
 /* ================= Financeiro: Contas a Pagar ================= */
@@ -1186,6 +1406,12 @@ function renderFolha() {
 
 /* ================= Relatórios ================= */
 function relatorioRows(tipo, year) {
+  if (tipo === "funcionarios") {
+    return STATE.fixos.map((f) => ({
+      "Nome": f.nome, "Cargo": f.cargo || "", "Situação": f.demissao ? "Demitido" : (f.ativo ? "Ativo" : "Inativo"),
+      "Admissão": fmtDate(f.dataInicio), "Desligamento": f.demissao ? fmtDate(f.demissao.data) : "", "Motivo do desligamento": f.demissao ? f.demissao.motivo : "",
+    }));
+  }
   if (tipo === "pagar") {
     return STATE.contasPagar.filter((c) => ymOf(c.dataVencimento)[0] === year).map((c) => ({
       "Descrição": c.descricao, "Centro de custo": centroCustoLabel(STATE, c.centroCusto), "Fornecedor": c.fornecedor || "",
@@ -1208,7 +1434,7 @@ function relatorioRows(tipo, year) {
 function renderRelatorios() {
   const tipo = UI.relTipo, year = UI.relYear;
   const rows = relatorioRows(tipo, year);
-  const titulos = { pagar: "Contas a Pagar", receber: "Contas a Receber", fluxo: "Fluxo de Caixa" };
+  const titulos = { pagar: "Contas a Pagar", receber: "Contas a Receber", fluxo: "Fluxo de Caixa", funcionarios: "Funcionários (ativos e demitidos)" };
   const colunas = rows.length ? Object.keys(rows[0]) : [];
   const tableHtml = rows.length === 0 ? emptyState("fileText", "Sem dados para este período.") :
     '<table class="fin-table"><thead><tr>' + colunas.map((c) => "<th>" + esc(c) + "</th>").join("") + '</tr></thead><tbody>' +
@@ -1219,14 +1445,15 @@ function renderRelatorios() {
     '<h2 class="fin-display" style="font-size:20px;font-weight:600">Relatórios</h2>' +
     '<div style="display:flex;gap:8px">' +
     '<select class="fin-input" style="width:170px" data-onchange="rel-tipo"><option value="pagar"' + (tipo === "pagar" ? " selected" : "") + '>Contas a Pagar</option>' +
-    '<option value="receber"' + (tipo === "receber" ? " selected" : "") + '>Contas a Receber</option><option value="fluxo"' + (tipo === "fluxo" ? " selected" : "") + '>Fluxo de Caixa</option></select>' +
-    '<select class="fin-input" style="width:90px" data-onchange="rel-year">' + yearOpts + '</select>' +
+    '<option value="receber"' + (tipo === "receber" ? " selected" : "") + '>Contas a Receber</option><option value="fluxo"' + (tipo === "fluxo" ? " selected" : "") + '>Fluxo de Caixa</option>' +
+    '<option value="funcionarios"' + (tipo === "funcionarios" ? " selected" : "") + '>Funcionários</option></select>' +
+    (tipo !== "funcionarios" ? '<select class="fin-input" style="width:90px" data-onchange="rel-year">' + yearOpts + '</select>' : '') +
     '<button class="fin-btn fin-btn-ghost" data-action="exportar-csv">' + icon("download", 14) + ' CSV</button>' +
     '<button class="fin-btn fin-btn-accent" onclick="window.print()">' + icon("printer", 14) + ' PDF</button></div></div>' +
     '<div class="fin-card" style="padding:20px"><div class="fin-zigzag" style="margin-bottom:14px"></div>' +
     '<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">' +
     '<img src="' + LOGO_TRIADE + '" alt="Tríade" style="height:30px;width:auto">' +
-    '<h3 class="fin-display" style="font-size:18px;font-weight:600;margin:0">' + esc(STATE.empresa.nome || "Relatório") + ' — ' + titulos[tipo] + " — " + year + '</h3></div>' + tableHtml + '</div>';
+    '<h3 class="fin-display" style="font-size:18px;font-weight:600;margin:0">' + esc(STATE.empresa.nome || "Relatório") + ' — ' + titulos[tipo] + (tipo !== "funcionarios" ? " — " + year : "") + '</h3></div>' + tableHtml + '</div>';
 }
 
 function exportarCSV() {
@@ -1287,7 +1514,7 @@ const TABS = [
 
 function renderTabContent() {
   if (UI.tab === "obras") return UI.obraSelecionada ? renderObraDetail(UI.obraSelecionada) : renderObrasList();
-  if (UI.tab === "fixos") return renderFixos();
+  if (UI.tab === "fixos") return EquipeFixaTab();
   if (UI.tab === "financeiro") return renderFinanceiro();
   if (UI.tab === "folha") return renderFolha();
   if (UI.tab === "relatorios") return renderRelatorios();
@@ -1305,6 +1532,10 @@ function renderModal() {
   if (m.type === "baixa") return modalWrap("Dar baixa", formBaixa(m.tipo));
   if (m.type === "novo-fixo") return modalWrap("Novo funcionário fixo", formFixo());
   if (m.type === "custos-fixo") return modalWrap("Custos de " + ((STATE.fixos.find((f) => f.id === m.fixoId) || {}).nome || ""), renderCustosFixoModalBody(m.fixoId));
+  if (m.type === "checklist-fixo") return modalWrap(m.tipo === "demissao" ? "Checklist de desligamento" : "Checklist de admissão", renderChecklistModalBody(m.fixoId, m.tipo));
+  if (m.type === "demitir-fixo") return modalWrap("Registrar desligamento", formDemitir(m.fixoId));
+  if (m.type === "ferias-form") return modalWrap("Agendar férias", formFerias());
+  if (m.type === "trabalhadores") return modalWrap("Trabalhadores cadastrados", renderTrabalhadoresModalBody());
   if (m.type === "cadastro") return modalWrap(m.tipo === "fornecedor" ? "Novo fornecedor" : "Novo cliente", formCadastroSimples(m.tipo));
   if (m.type === "extrato") return modalWrap("Lançar linha do extrato", formExtrato());
   if (m.type === "lancar-folha") return modalWrap("Lançar custos de obra em Contas a Pagar", formLancarFolha(m.total, m.mes, m.ano));
@@ -1429,6 +1660,16 @@ function handleClick(action, el) {
   if (action === "obra-open") { UI.obraSelecionada = id; render(); return; }
   if (action === "obra-back") { UI.obraSelecionada = null; render(); return; }
   if (action === "open-modal-nova-obra") { UI.modal = { type: "nova-obra" }; render(); return; }
+  if (action === "open-modal-trabalhadores") { UI.modal = { type: "trabalhadores" }; render(); return; }
+  if (action === "submit-trabalhador") {
+    const nome = val("f-trabNome"); if (!nome) return;
+    setState((s) => { s.trabalhadores.push({ id: uid(), nome: nome, documento: val("f-trabDocumento"), telefone: val("f-trabTelefone") }); });
+    render(); return;
+  }
+  if (action === "remove-trabalhador") {
+    setState((s) => { s.trabalhadores = s.trabalhadores.filter((t) => t.id !== id); });
+    return;
+  }
   if (action === "submit-obra") {
     const nome = val("f-nome");
     if (!nome) return;
@@ -1450,7 +1691,11 @@ function handleClick(action, el) {
   if (action === "submit-funcionario-obra") {
     const nome = val("f-nome"); if (!nome) return;
     const obraId = UI.obraSelecionada;
-    setState((s) => { s.obras = s.obras.map((o) => o.id === obraId ? Object.assign({}, o, { funcionarios: (o.funcionarios || []).concat([{ id: uid(), ativo: true, nome: nome, tipoValor: val("f-tipoValor"), valor: val("f-valor"), transporte: val("f-transporte"), outros: val("f-outros") }]) }) : o); });
+    setState((s) => {
+      s.obras = s.obras.map((o) => o.id === obraId ? Object.assign({}, o, { funcionarios: (o.funcionarios || []).concat([{ id: uid(), ativo: true, nome: nome, tipoValor: val("f-tipoValor"), valor: val("f-valor"), transporte: val("f-transporte"), outros: val("f-outros") }]) }) : o);
+      const jaExiste = s.trabalhadores.some((t) => t.nome.trim().toLowerCase() === nome.trim().toLowerCase());
+      if (!jaExiste) s.trabalhadores.push({ id: uid(), nome: nome, documento: "", telefone: "" });
+    });
     UI.modal = null; render(); return;
   }
   if (action === "toggle-funcionario-obra") {
@@ -1505,11 +1750,77 @@ function handleClick(action, el) {
   if (action === "open-modal-novo-fixo") { UI.modal = { type: "novo-fixo" }; render(); return; }
   if (action === "submit-fixo") {
     const nome = val("f-nome"); if (!nome) return;
-    setState((s) => { s.fixos.push({ id: uid(), ativo: true, nome: nome, cargo: val("f-cargo"), salario: val("f-salario"), dataInicio: val("f-dataInicio"), custosAdicionais: [] }); });
+    setState((s) => { s.fixos.push({ id: uid(), ativo: true, nome: nome, cargo: val("f-cargo"), salario: val("f-salario"), dataInicio: val("f-dataInicio"), custosAdicionais: [], documentosAdmissao: novoChecklist(DOCS_ADMISSAO_PADRAO), demissao: null }); });
     UI.modal = null; render(); return;
   }
   if (action === "toggle-fixo") { setState((s) => { s.fixos = s.fixos.map((f) => f.id === id ? Object.assign({}, f, { ativo: !f.ativo }) : f); }); return; }
   if (action === "remove-fixo") { setState((s) => { s.fixos = s.fixos.filter((f) => f.id !== id); }); return; }
+
+  if (action === "fixo-sub") { UI.fixoSub = id; render(); return; }
+  if (action === "open-modal-checklist") { UI.modal = { type: "checklist-fixo", fixoId: id, tipo: tipo }; render(); return; }
+  if (action === "toggle-checklist-item") {
+    const fixoId = el.getAttribute("data-fixoid"), itemId = el.getAttribute("data-itemid"), tipoItem = el.getAttribute("data-tipo");
+    setState((s) => {
+      s.fixos = s.fixos.map((f) => {
+        if (f.id !== fixoId) return f;
+        if (tipoItem === "demissao" && f.demissao) {
+          return Object.assign({}, f, { demissao: Object.assign({}, f.demissao, { documentos: f.demissao.documentos.map((d) => d.id === itemId ? Object.assign({}, d, { feito: !d.feito }) : d) }) });
+        }
+        return Object.assign({}, f, { documentosAdmissao: (f.documentosAdmissao || []).map((d) => d.id === itemId ? Object.assign({}, d, { feito: !d.feito }) : d) });
+      });
+    });
+    return;
+  }
+  if (action === "open-modal-demitir") { UI.modal = { type: "demitir-fixo", fixoId: id }; render(); return; }
+  if (action === "submit-demitir") {
+    const data = val("f-demissaoData"), motivo = val("f-demissaoMotivo");
+    setState((s) => {
+      s.fixos = s.fixos.map((f) => f.id === id ? Object.assign({}, f, { ativo: false, demissao: { data: data, motivo: motivo, documentos: novoChecklist(DOCS_DEMISSAO_PADRAO) } }) : f);
+    });
+    UI.modal = null; render(); return;
+  }
+
+  if (action === "ferias-cal-prev") {
+    UI.feriasCalMonth -= 1; if (UI.feriasCalMonth < 0) { UI.feriasCalMonth = 11; UI.feriasCalYear -= 1; } render(); return;
+  }
+  if (action === "ferias-cal-next") {
+    UI.feriasCalMonth += 1; if (UI.feriasCalMonth > 11) { UI.feriasCalMonth = 0; UI.feriasCalYear += 1; } render(); return;
+  }
+  if (action === "open-modal-ferias") { UI.modal = { type: "ferias-form" }; render(); return; }
+  if (action === "submit-ferias") {
+    const fixoId = val("f-feriasFixoId");
+    const f = STATE.fixos.find((x) => x.id === fixoId);
+    if (!f) return;
+    const periodos = [1, 2, 3].map((n) => ({ dias: Number(val("f-feriasDias" + n)) || 0, dataInicio: val("f-feriasInicio" + n) })).filter((p) => p.dias > 0 && p.dataInicio);
+    const abonoAtivado = document.getElementById("f-feriasAbono").checked;
+    const abonoDias = abonoAtivado ? (Number(val("f-feriasAbonoDias")) || 0) : 0;
+    const abonoValor = abonoAtivado ? (Number(val("f-feriasAbonoValor")) || 0) : 0;
+    const erro = feriasValidar(periodos, abonoDias);
+    if (erro) { alert(erro); return; }
+    const feriasId = uid();
+    setState((s) => {
+      s.ferias.push({ id: feriasId, fixoId: fixoId, funcionarioNome: f.nome, periodos: periodos, abono: { ativado: abonoAtivado, dias: abonoDias, valor: abonoValor } });
+      if (abonoAtivado && abonoValor > 0) {
+        const primeiraData = periodos[0].dataInicio;
+        const ym = ymOf(primeiraData);
+        const competencia = ym[0] + "-" + String(ym[1] + 1).padStart(2, "0");
+        s.contasPagar.push({
+          id: uid(), descricao: "Abono de férias — " + f.nome, categoria: "Abono de Férias", centroCusto: "escritorio",
+          fornecedor: "", valor: abonoValor, dataVencimento: primeiraData, dataPagamento: null, formaPagamento: "",
+          documentoRef: "", competencia: competencia, origemFeriasId: feriasId,
+        });
+      }
+    });
+    UI.modal = null; render(); return;
+  }
+  if (action === "remove-ferias") {
+    setState((s) => {
+      s.ferias = s.ferias.filter((fe) => fe.id !== id);
+      s.contasPagar = s.contasPagar.filter((c) => c.origemFeriasId !== id);
+    });
+    return;
+  }
+
   if (action === "open-modal-custos-fixo") { UI.modal = { type: "custos-fixo", fixoId: id }; render(); return; }
   if (action === "submit-custo-fixo") {
     const descricao = val("f-custoDescricao"), valor = val("f-custoValor"); if (!descricao || !valor) return;
