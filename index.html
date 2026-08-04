@@ -197,6 +197,31 @@ if (SUPABASE_CONFIGURADO) {
 let AUTH_STATUS = "checking"; // checking | loggedOut | loggedIn | naoConfigurado
 let AUTH_ERROR = "";
 let SAVE_TIMER = null;
+let CURRENT_USER_EMAIL = "";
+let AUDITORIA_CACHE = [];
+let AUDITORIA_CARREGANDO = false;
+
+async function registrarAuditoria(acao, entidade, descricao) {
+  if (!sb || !CURRENT_USER_EMAIL) return;
+  try {
+    await sb.from("auditoria").insert({ autor_email: CURRENT_USER_EMAIL, acao: acao, entidade: entidade || "", descricao: descricao || "" });
+  } catch (e) {
+    console.error("Erro ao registrar auditoria:", e);
+  }
+}
+async function carregarAuditoria() {
+  if (!sb) return;
+  AUDITORIA_CARREGANDO = true;
+  render();
+  try {
+    const { data, error } = await sb.from("auditoria").select("*").order("criado_em", { ascending: false }).limit(300);
+    if (!error) AUDITORIA_CACHE = data || [];
+  } catch (e) {
+    console.error(e);
+  }
+  AUDITORIA_CARREGANDO = false;
+  render();
+}
 
 async function loadStateFromSupabase() {
   const { data, error } = await sb.from(TABLE_NAME).select("data").eq("id", ROW_ID).single();
@@ -1497,6 +1522,7 @@ function handleImportarBackup(input) {
     ensureRecorrentesDoMes();
     saveStateNow();
     render();
+    registrarAuditoria("Importou backup", "Sistema", "Substituiu todos os dados a partir de um arquivo .json");
     input.value = "";
   };
   reader.readAsText(file);
@@ -1510,7 +1536,21 @@ const TABS = [
   { id: "financeiro", label: "Financeiro", icon: "landmark" },
   { id: "folha", label: "Folha de pagamento", icon: "fileText" },
   { id: "relatorios", label: "Relatórios", icon: "clipboard" },
+  { id: "auditoria", label: "Auditoria", icon: "clipboard" },
 ];
+
+function renderAuditoria() {
+  if (AUDITORIA_CARREGANDO) return '<div style="padding:40px;text-align:center;color:var(--ink-soft);font-size:13px">Carregando histórico...</div>';
+  const rows = AUDITORIA_CACHE.length === 0 ? emptyState("clipboard", "Nenhum evento registrado ainda.") :
+    '<table class="fin-table"><thead><tr><th>Data/hora</th><th>Usuário</th><th>Ação</th><th>Entidade</th><th>Detalhe</th></tr></thead><tbody>' +
+    AUDITORIA_CACHE.map((a) => '<tr><td>' + new Date(a.criado_em).toLocaleString("pt-BR") + '</td><td>' + esc(a.autor_email || "—") + '</td>' +
+      '<td style="font-weight:600">' + esc(a.acao) + '</td><td>' + esc(a.entidade || "—") + '</td><td>' + esc(a.descricao || "—") + '</td></tr>').join("") + '</tbody></table>';
+  return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">' +
+    '<h2 class="fin-display" style="font-size:20px;font-weight:600">Auditoria</h2>' +
+    '<button class="fin-btn fin-btn-ghost" data-action="recarregar-auditoria">' + icon("download", 14) + ' Atualizar</button></div>' +
+    '<div style="font-size:12px;color:var(--ink-soft);margin-bottom:14px">Histórico das últimas 300 ações importantes (criação, exclusão, pagamentos, desligamentos, login). Registro somente-leitura — nenhum usuário consegue editar ou apagar entradas já feitas.</div>' +
+    '<div class="fin-card">' + rows + '</div>';
+}
 
 function renderTabContent() {
   if (UI.tab === "obras") return UI.obraSelecionada ? renderObraDetail(UI.obraSelecionada) : renderObrasList();
@@ -1518,6 +1558,7 @@ function renderTabContent() {
   if (UI.tab === "financeiro") return renderFinanceiro();
   if (UI.tab === "folha") return renderFolha();
   if (UI.tab === "relatorios") return renderRelatorios();
+  if (UI.tab === "auditoria") return renderAuditoria();
   return renderDashboard();
 }
 
@@ -1654,7 +1695,12 @@ function handleClick(action, el) {
   const id = el.getAttribute("data-id");
   const tipo = el.getAttribute("data-tipo");
 
-  if (action === "tab") { UI.tab = id; UI.obraSelecionada = null; render(); return; }
+  if (action === "tab") {
+    UI.tab = id; UI.obraSelecionada = null; render();
+    if (id === "auditoria") carregarAuditoria();
+    return;
+  }
+  if (action === "recarregar-auditoria") { carregarAuditoria(); return; }
   if (action === "close-modal") { closeModal(); return; }
 
   if (action === "obra-open") { UI.obraSelecionada = id; render(); return; }
@@ -1674,17 +1720,22 @@ function handleClick(action, el) {
     const nome = val("f-nome");
     if (!nome) return;
     setState((s) => { s.obras.push({ id: uid(), status: "ativa", funcionarios: [], nome: nome, cliente: val("f-cliente"), valorContrato: val("f-valorContrato"), local: val("f-local"), dataInicio: val("f-dataInicio") }); });
+    registrarAuditoria("Criou obra", "Obra", nome);
     UI.modal = null; render(); return;
   }
   if (action === "open-modal-encerrar-obra") { UI.modal = { type: "encerrar-obra" }; render(); return; }
   if (action === "submit-encerrar-obra") {
     const obraId = UI.obraSelecionada;
+    const obraNome = (STATE.obras.find((o) => o.id === obraId) || {}).nome || "";
     setState((s) => { s.obras = s.obras.map((o) => o.id === obraId ? Object.assign({}, o, { status: "encerrada", dataEncerramento: todayStr() }) : o); });
+    registrarAuditoria("Encerrou obra", "Obra", obraNome);
     UI.modal = null; render(); return;
   }
   if (action === "reabrir-obra") {
     const obraId = UI.obraSelecionada;
+    const obraNome = (STATE.obras.find((o) => o.id === obraId) || {}).nome || "";
     setState((s) => { s.obras = s.obras.map((o) => o.id === obraId ? Object.assign({}, o, { status: "ativa", dataEncerramento: null }) : o); });
+    registrarAuditoria("Reabriu obra", "Obra", obraNome);
     return;
   }
   if (action === "open-modal-funcionario-obra") { UI.modal = { type: "funcionario-obra" }; render(); return; }
@@ -1717,12 +1768,14 @@ function handleClick(action, el) {
     const descricao = val("f-descricao"), valor = val("f-valor");
     if (!descricao || !valor) return;
     setState((s) => { s.contasPagar.push({ id: uid(), descricao: descricao, categoria: val("f-categoria"), centroCusto: val("f-centroCusto"), fornecedor: val("f-fornecedor"), valor: valor, dataVencimento: val("f-dataVencimento"), dataPagamento: null, formaPagamento: val("f-formaPagamento"), documentoRef: val("f-documentoRef") }); });
+    registrarAuditoria("Lançou conta a pagar", "Financeiro", descricao + " — " + fmtBRL(valor));
     UI.modal = null; render(); return;
   }
   if (action === "submit-conta-receber") {
     const descricao = val("f-descricao"), valor = val("f-valor");
     if (!descricao || !valor) return;
     setState((s) => { s.contasReceber.push({ id: uid(), descricao: descricao, cliente: val("f-cliente"), obraId: val("f-obraId") || null, valor: valor, dataVencimento: val("f-dataVencimento"), dataRecebimento: null, formaPagamento: val("f-formaPagamento"), documentoRef: val("f-documentoRef") }); });
+    registrarAuditoria("Lançou conta a receber", "Financeiro", descricao + " — " + fmtBRL(valor));
     UI.modal = null; render(); return;
   }
   if (action === "open-modal-baixa-pagar") { UI.modal = { type: "baixa", tipo: "pagar", contaId: id }; render(); return; }
@@ -1730,31 +1783,59 @@ function handleClick(action, el) {
   if (action === "submit-baixa") {
     const dataBaixa = val("f-dataBaixa");
     const m = UI.modal;
+    const conta = m.tipo === "pagar" ? STATE.contasPagar.find((c) => c.id === m.contaId) : STATE.contasReceber.find((c) => c.id === m.contaId);
     setState((s) => {
       if (m.tipo === "pagar") s.contasPagar = s.contasPagar.map((c) => c.id === m.contaId ? Object.assign({}, c, { dataPagamento: dataBaixa }) : c);
       else s.contasReceber = s.contasReceber.map((c) => c.id === m.contaId ? Object.assign({}, c, { dataRecebimento: dataBaixa }) : c);
     });
+    registrarAuditoria(m.tipo === "pagar" ? "Pagou conta" : "Recebeu conta", "Financeiro", (conta ? conta.descricao : "") + " — " + fmtBRL(conta ? conta.valor : 0));
     UI.modal = null; render(); return;
   }
-  if (action === "estornar-pagar") { setState((s) => { s.contasPagar = s.contasPagar.map((c) => c.id === id ? Object.assign({}, c, { dataPagamento: null }) : c); }); return; }
-  if (action === "estornar-receber") { setState((s) => { s.contasReceber = s.contasReceber.map((c) => c.id === id ? Object.assign({}, c, { dataRecebimento: null }) : c); }); return; }
-  if (action === "remove-pagar") { setState((s) => { s.contasPagar = s.contasPagar.filter((c) => c.id !== id); }); return; }
+  if (action === "estornar-pagar") {
+    const conta = STATE.contasPagar.find((c) => c.id === id);
+    setState((s) => { s.contasPagar = s.contasPagar.map((c) => c.id === id ? Object.assign({}, c, { dataPagamento: null }) : c); });
+    registrarAuditoria("Estornou pagamento", "Financeiro", conta ? conta.descricao : "");
+    return;
+  }
+  if (action === "estornar-receber") {
+    const conta = STATE.contasReceber.find((c) => c.id === id);
+    setState((s) => { s.contasReceber = s.contasReceber.map((c) => c.id === id ? Object.assign({}, c, { dataRecebimento: null }) : c); });
+    registrarAuditoria("Estornou recebimento", "Financeiro", conta ? conta.descricao : "");
+    return;
+  }
+  if (action === "remove-pagar") {
+    const conta = STATE.contasPagar.find((c) => c.id === id);
+    setState((s) => { s.contasPagar = s.contasPagar.filter((c) => c.id !== id); });
+    registrarAuditoria("Excluiu conta a pagar", "Financeiro", conta ? conta.descricao : "");
+    return;
+  }
   if (action === "open-modal-recibo-pagar") {
     const c = STATE.contasPagar.find((x) => x.id === id);
     if (!c) return;
     UI.modal = { type: "recibo-form", defaults: { recebedor: c.fornecedor || "", valor: Math.abs(Number(c.valor) || 0), data: c.dataPagamento || c.dataVencimento || todayStr(), descricao: c.descricao || "", formaPagamento: c.formaPagamento || "" } };
     render(); return;
   }
-  if (action === "remove-receber") { setState((s) => { s.contasReceber = s.contasReceber.filter((c) => c.id !== id); }); return; }
+  if (action === "remove-receber") {
+    const conta = STATE.contasReceber.find((c) => c.id === id);
+    setState((s) => { s.contasReceber = s.contasReceber.filter((c) => c.id !== id); });
+    registrarAuditoria("Excluiu conta a receber", "Financeiro", conta ? conta.descricao : "");
+    return;
+  }
 
   if (action === "open-modal-novo-fixo") { UI.modal = { type: "novo-fixo" }; render(); return; }
   if (action === "submit-fixo") {
     const nome = val("f-nome"); if (!nome) return;
     setState((s) => { s.fixos.push({ id: uid(), ativo: true, nome: nome, cargo: val("f-cargo"), salario: val("f-salario"), dataInicio: val("f-dataInicio"), custosAdicionais: [], documentosAdmissao: novoChecklist(DOCS_ADMISSAO_PADRAO), demissao: null }); });
+    registrarAuditoria("Admitiu funcionário", "Equipe fixa", nome);
     UI.modal = null; render(); return;
   }
   if (action === "toggle-fixo") { setState((s) => { s.fixos = s.fixos.map((f) => f.id === id ? Object.assign({}, f, { ativo: !f.ativo }) : f); }); return; }
-  if (action === "remove-fixo") { setState((s) => { s.fixos = s.fixos.filter((f) => f.id !== id); }); return; }
+  if (action === "remove-fixo") {
+    const nomeF = (STATE.fixos.find((f) => f.id === id) || {}).nome || "";
+    setState((s) => { s.fixos = s.fixos.filter((f) => f.id !== id); });
+    registrarAuditoria("Excluiu funcionário", "Equipe fixa", nomeF);
+    return;
+  }
 
   if (action === "fixo-sub") { UI.fixoSub = id; render(); return; }
   if (action === "open-modal-checklist") { UI.modal = { type: "checklist-fixo", fixoId: id, tipo: tipo }; render(); return; }
@@ -1774,9 +1855,11 @@ function handleClick(action, el) {
   if (action === "open-modal-demitir") { UI.modal = { type: "demitir-fixo", fixoId: id }; render(); return; }
   if (action === "submit-demitir") {
     const data = val("f-demissaoData"), motivo = val("f-demissaoMotivo");
+    const nomeF = (STATE.fixos.find((f) => f.id === id) || {}).nome || "";
     setState((s) => {
       s.fixos = s.fixos.map((f) => f.id === id ? Object.assign({}, f, { ativo: false, demissao: { data: data, motivo: motivo, documentos: novoChecklist(DOCS_DEMISSAO_PADRAO) } }) : f);
     });
+    registrarAuditoria("Demitiu funcionário", "Equipe fixa", nomeF + " — " + motivo);
     UI.modal = null; render(); return;
   }
 
@@ -1811,13 +1894,16 @@ function handleClick(action, el) {
         });
       }
     });
+    registrarAuditoria("Agendou férias", "Equipe fixa", f.nome + " — " + periodos.map((p) => p.dias + "d a partir de " + p.dataInicio).join(", "));
     UI.modal = null; render(); return;
   }
   if (action === "remove-ferias") {
+    const feriasNome = (STATE.ferias.find((fe) => fe.id === id) || {}).funcionarioNome || "";
     setState((s) => {
       s.ferias = s.ferias.filter((fe) => fe.id !== id);
       s.contasPagar = s.contasPagar.filter((c) => c.origemFeriasId !== id);
     });
+    registrarAuditoria("Excluiu férias", "Equipe fixa", feriasNome);
     return;
   }
 
@@ -1907,13 +1993,16 @@ function handleClick(action, el) {
         dataPagamento: null, formaPagamento: "", documentoRef: "", competencia: competencia, origemAjusteId: ajusteId,
       });
     });
+    registrarAuditoria("Lançou " + tipo.toLowerCase(), "Financeiro", funcionarioNome + " — " + fmtBRL(valorAssinado));
     UI.modal = null; render(); return;
   }
   if (action === "remove-ajuste") {
+    const ajusteInfo = STATE.ajustes.find((a) => a.id === id);
     setState((s) => {
       s.ajustes = s.ajustes.filter((a) => a.id !== id);
       s.contasPagar = s.contasPagar.filter((c) => c.origemAjusteId !== id);
     });
+    registrarAuditoria("Excluiu variável (bônus/comissão/desconto)", "Financeiro", ajusteInfo ? ajusteInfo.funcionarioNome : "");
     return;
   }
 
@@ -1953,6 +2042,7 @@ function handleClick(action, el) {
     return;
   }
   if (action === "logout") {
+    registrarAuditoria("Logout", "Sessão", "Saiu do sistema");
     sb.auth.signOut().then(() => {
       STATE = null;
       AUTH_STATUS = "loggedOut";
@@ -2019,6 +2109,7 @@ async function bootstrapAuth() {
   const { data } = await sb.auth.getSession();
   if (data && data.session) {
     AUTH_STATUS = "loggedIn";
+    CURRENT_USER_EMAIL = data.session.user.email;
     render();
     STATE = await loadStateFromSupabase();
     if (ensureRecorrentesDoMes()) { saveStateNow(); }
@@ -2032,13 +2123,16 @@ async function bootstrapAuth() {
     if (event === "SIGNED_IN" && AUTH_STATUS !== "loggedIn") {
       AUTH_STATUS = "loggedIn";
       AUTH_ERROR = "";
+      CURRENT_USER_EMAIL = session && session.user ? session.user.email : "";
       render();
       STATE = await loadStateFromSupabase();
       if (ensureRecorrentesDoMes()) { saveStateNow(); }
       render();
+      registrarAuditoria("Login", "Sessão", "Entrou no sistema");
     } else if (event === "SIGNED_OUT") {
       AUTH_STATUS = "loggedOut";
       STATE = null;
+      CURRENT_USER_EMAIL = "";
       render();
     }
   });
