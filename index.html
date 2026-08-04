@@ -161,9 +161,14 @@ const SUPABASE_URL = "COLOQUE_SUA_SUPABASE_URL_AQUI";
 const SUPABASE_ANON_KEY = "COLOQUE_SUA_SUPABASE_ANON_KEY_AQUI";
 const TABLE_NAME = "financeiro_dados";
 const ROW_ID = "principal";
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-let AUTH_STATUS = "checking"; // checking | loggedOut | loggedIn
+const SUPABASE_CONFIGURADO = SUPABASE_URL.indexOf("COLOQUE_") !== 0 && SUPABASE_ANON_KEY.indexOf("COLOQUE_") !== 0;
+let sb = null;
+if (SUPABASE_CONFIGURADO) {
+  try { sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); } catch (e) { console.error("Erro ao criar cliente Supabase:", e); }
+}
+
+let AUTH_STATUS = "checking"; // checking | loggedOut | loggedIn | naoConfigurado
 let AUTH_ERROR = "";
 let SAVE_TIMER = null;
 
@@ -1246,8 +1251,18 @@ function renderLoginScreen() {
 function renderLoadingScreen(msg) {
   return '<div class="login-screen"><div style="color:var(--ink-soft);font-size:13px">' + esc(msg) + '</div></div>';
 }
+function renderNaoConfiguradoScreen() {
+  return '<div class="login-screen"><div class="login-card" style="max-width:440px;text-align:left">' +
+    '<div style="text-align:center;margin-bottom:16px">' +
+    '<img src="' + LOGO_TRIADE + '" alt="Tríade" style="height:56px;width:auto;margin-bottom:8px"></div>' +
+    '<h3 class="fin-display" style="font-size:16px;font-weight:700;margin:0 0 10px">Supabase ainda não configurado</h3>' +
+    '<p style="font-size:13px;color:var(--ink-soft);line-height:1.5;margin:0 0 8px">Este arquivo ainda tem os valores de exemplo no lugar da URL e da chave do Supabase.</p>' +
+    '<p style="font-size:13px;color:var(--ink-soft);line-height:1.5;margin:0">Edite o <code>index.html</code>, procure por <code>SUPABASE_URL</code> e <code>SUPABASE_ANON_KEY</code> perto do início do bloco <code>&lt;script&gt;</code>, cole os valores do seu projeto (Project Settings → API) e suba o arquivo novamente.</p>' +
+    '</div></div>';
+}
 
 function render() {
+  if (AUTH_STATUS === "naoConfigurado") { document.getElementById("root").innerHTML = renderNaoConfiguradoScreen(); return; }
   if (AUTH_STATUS === "checking") { document.getElementById("root").innerHTML = renderLoadingScreen("Verificando sessão..."); return; }
   if (AUTH_STATUS === "loggedOut") { document.getElementById("root").innerHTML = renderLoginScreen(); return; }
   if (!STATE) { document.getElementById("root").innerHTML = renderLoadingScreen("Carregando dados..."); return; }
@@ -1536,6 +1551,12 @@ document.addEventListener("keydown", function (e) {
 });
 
 async function bootstrapAuth() {
+  if (!SUPABASE_CONFIGURADO || !sb) {
+    AUTH_STATUS = "naoConfigurado";
+    render();
+    return;
+  }
+
   const { data } = await sb.auth.getSession();
   if (data && data.session) {
     AUTH_STATUS = "loggedIn";
