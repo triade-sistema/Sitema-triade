@@ -5,13 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Financeiro Obras</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
   :root{
-    --bg:#EEF2EF; --surface:#FFFFFF; --ink:#17321D; --ink-soft:#56695C; --line:#D8E0DA;
-    --accent:#1C9B3C; --accent-dark:#145A2A;
+    --bg:#EDF2EE; --surface:#FFFFFF; --ink:#17321D; --ink-soft:#5C6E62; --line:#E0E6E1;
+    --accent:#1C9B3C; --accent-dark:#145A2A; --accent-soft:#E9F7EC;
     --positive:#1C9B3C; --negative:#C1462B; --warn:#B8860B;
-    --sidebar:#12261A; --sidebar-ink:#C7D3C9; --sidebar-ink-active:#FFFFFF;
+    --sidebar:#0F2016; --sidebar-2:#16301F; --sidebar-ink:#B9CABF; --sidebar-ink-active:#FFFFFF;
     --logo-bg:#F7F7F7;
+    --shadow-sm:0 1px 2px rgba(15,32,22,0.06), 0 1px 1px rgba(15,32,22,0.04);
+    --shadow-md:0 8px 24px rgba(15,32,22,0.08), 0 2px 6px rgba(15,32,22,0.05);
+    --shadow-lg:0 24px 60px rgba(15,32,22,0.16);
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;height:100%;}
@@ -20,52 +23,58 @@
   .fin-display{font-family:'Oswald',sans-serif; letter-spacing:0.01em;}
   .fin-zigzag{ height:6px; width:100%;
     background-image: linear-gradient(135deg, var(--accent) 25%, transparent 25%), linear-gradient(225deg, var(--accent) 25%, transparent 25%);
-    background-size: 12px 12px; background-repeat: repeat-x; opacity:0.9; }
-  .fin-card{ background:var(--surface); border:1px solid var(--line); border-radius:6px; }
-  .fin-btn{ font-family:'Inter',sans-serif; font-weight:600; font-size:13px; border-radius:5px; padding:8px 14px;
+    background-size: 12px 12px; background-repeat: repeat-x; opacity:0.9; border-radius:99px; }
+  .fin-card{ background:var(--surface); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow-sm); overflow:hidden; }
+  .fin-btn{ font-family:'Inter',sans-serif; font-weight:600; font-size:13px; border-radius:9px; padding:9px 15px;
     display:inline-flex; align-items:center; gap:6px; cursor:pointer; border:1px solid transparent; white-space:nowrap;
-    transition:filter .12s ease, transform .05s ease; }
-  .fin-btn:active{transform:translateY(1px);}
+    transition:filter .12s ease, transform .08s ease, box-shadow .12s ease; }
+  .fin-btn:active{transform:translateY(1px) scale(0.99);}
   .fin-btn:disabled{opacity:0.45; cursor:not-allowed;}
-  .fin-btn-accent{background:var(--accent); color:#241703;}
-  .fin-btn-accent:hover{filter:brightness(1.06);}
-  .fin-btn-ghost{background:transparent; border:1px solid var(--line); color:var(--ink-soft);}
-  .fin-btn-ghost:hover{background:#F3F4F5;}
+  .fin-btn-accent{background:var(--accent); color:#ffffff; box-shadow:0 4px 12px rgba(28,155,60,0.28);}
+  .fin-btn-accent:hover{filter:brightness(1.07); box-shadow:0 6px 16px rgba(28,155,60,0.35);}
+  .fin-btn-ghost{background:var(--surface); border:1px solid var(--line); color:var(--ink-soft);}
+  .fin-btn-ghost:hover{background:#F4F7F4; border-color:#CFD9D2;}
   .fin-btn-danger{background:transparent; color:var(--negative); border:1px solid #EBC7BE;}
   .fin-btn-danger:hover{background:#FBEEEA;}
-  .fin-btn-sm{padding:5px 9px; font-size:12px;}
-  .fin-input{ font-family:'Inter',sans-serif; border:1px solid var(--line); border-radius:5px; padding:8px 10px;
-    font-size:13px; width:100%; background:#FCFCFD; color:var(--ink); }
-  .fin-input:focus{outline:2px solid var(--accent); outline-offset:0; border-color:var(--accent);}
-  .fin-label{ font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--ink-soft); margin-bottom:5px; display:block; }
+  .fin-btn-sm{padding:6px 10px; font-size:12px; border-radius:7px;}
+  .fin-input{ font-family:'Inter',sans-serif; border:1px solid var(--line); border-radius:9px; padding:9px 11px;
+    font-size:13px; width:100%; background:#FBFCFB; color:var(--ink); transition:border-color .12s ease, box-shadow .12s ease; }
+  .fin-input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); background:#fff;}
+  .fin-label{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-soft); margin-bottom:6px; display:block; }
   .fin-table{width:100%; border-collapse:collapse; font-size:13px;}
   .fin-table th{ text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft);
-    font-weight:600; padding:9px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
-  .fin-table td{padding:10px 12px; border-bottom:1px solid #EEF0F1; vertical-align:middle;}
+    font-weight:700; padding:11px 14px; border-bottom:1px solid var(--line); white-space:nowrap; background:#F7FAF7; }
+  .fin-table td{padding:11px 14px; border-bottom:1px solid #EEF2EF; vertical-align:middle;}
   .fin-table tr:last-child td{border-bottom:none;}
-  .fin-table tbody tr:hover{background:#F7F8F9;}
-  .fin-nav-item{ display:flex; align-items:center; gap:10px; padding:10px 16px; color:var(--sidebar-ink);
-    font-size:13px; font-weight:500; cursor:pointer; border-left:3px solid transparent; }
-  .fin-nav-item:hover{background:rgba(255,255,255,0.04); color:var(--sidebar-ink-active);}
-  .fin-nav-item.active{ background:rgba(226,154,46,0.12); color:var(--sidebar-ink-active); border-left:3px solid var(--accent); }
-  .fin-pill{ font-size:12px; font-weight:600; padding:7px 13px; border-radius:99px; cursor:pointer; border:1px solid var(--line); color:var(--ink-soft); background:var(--surface); }
+  .fin-table tbody tr{transition:background .1s ease;}
+  .fin-table tbody tr:hover{background:#F6FAF6;}
+  .fin-nav-item{ display:flex; align-items:center; gap:10px; padding:10px 14px; margin:2px 12px; border-radius:9px; color:var(--sidebar-ink);
+    font-size:13px; font-weight:500; cursor:pointer; transition:background .12s ease, color .12s ease; }
+  .fin-nav-item:hover{background:rgba(255,255,255,0.06); color:var(--sidebar-ink-active);}
+  .fin-nav-item.active{ background:var(--accent); color:#ffffff; box-shadow:0 4px 12px rgba(0,0,0,0.25); }
+  .fin-pill{ font-size:12px; font-weight:600; padding:8px 15px; border-radius:99px; cursor:pointer; border:1px solid var(--line); color:var(--ink-soft); background:var(--surface); transition:all .12s ease; }
+  .fin-pill:hover{border-color:var(--accent);}
   .fin-pill.active{ background:var(--ink); color:white; border-color:var(--ink); }
-  .fin-badge{ font-size:11px; font-weight:600; padding:3px 9px; border-radius:99px; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
+  .fin-badge{ font-size:11px; font-weight:700; padding:4px 10px; border-radius:99px; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
   .fin-badge-ativa, .fin-badge-pago, .fin-badge-recebido{background:#E4F2EB; color:var(--positive);}
   .fin-badge-encerrada{background:#EDEEEF; color:var(--ink-soft);}
   .fin-badge-atrasado{background:#FBEEEA; color:var(--negative);}
   .fin-badge-pendente{background:#FCF3DF; color:var(--warn);}
-  .fin-modal-backdrop{ position:fixed; inset:0; background:rgba(20,22,26,0.5); display:flex; align-items:flex-start;
+  .fin-modal-backdrop{ position:fixed; inset:0; background:rgba(10,20,14,0.55); backdrop-filter:blur(2px); display:flex; align-items:flex-start;
     justify-content:center; padding:40px 16px; overflow-y:auto; z-index:50; }
-  .fin-modal{ background:var(--surface); border-radius:8px; width:100%; max-width:580px; box-shadow:0 20px 50px rgba(0,0,0,0.25); margin:0 auto; }
+  .fin-modal{ background:var(--surface); border-radius:18px; width:100%; max-width:580px; box-shadow:var(--shadow-lg); margin:0 auto; }
   @media print{
     .no-print{display:none !important;}
     body, .fin-root{background:white !important;}
     .fin-root{ --ink:#000000; --ink-soft:#222222; }
     .fin-table td, .fin-table th{ color:#000 !important; }
+    .fin-card{ box-shadow:none !important; }
   }
-  .login-screen{ min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--bg); }
-  .login-card{ background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:36px 32px; width:100%; max-width:360px; box-shadow:0 20px 50px rgba(0,0,0,0.08); }
+  .login-screen{ min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 30% 20%, #1c9b3c22, transparent 55%), radial-gradient(circle at 80% 85%, #14352022, transparent 50%), var(--bg); }
+  .login-card{ background:var(--surface); border:1px solid var(--line); border-radius:22px; width:100%; max-width:380px; box-shadow:var(--shadow-lg); overflow:hidden; }
+  .login-logo-panel{ background:var(--logo-bg); padding:36px 32px 26px; display:flex; flex-direction:column; align-items:center; gap:10px; text-align:center; }
+  .login-body{ padding:28px 32px 32px; }
 </style>
 </head>
 <body>
@@ -225,6 +234,50 @@ function badge(status) {
   return '<span class="fin-badge fin-badge-' + status + '">' + statusLabel(status) + '</span>';
 }
 
+/* ================= Valor por extenso (PT-BR) ================= */
+function grupo3Extenso(n) {
+  const unidades = ["", "um", "dois", "três", "quatro", "cinco", "seis", "sete", "oito", "nove"];
+  const dez19 = ["dez", "onze", "doze", "treze", "quatorze", "quinze", "dezesseis", "dezessete", "dezoito", "dezenove"];
+  const dezenas = ["", "", "vinte", "trinta", "quarenta", "cinquenta", "sessenta", "setenta", "oitenta", "noventa"];
+  const centenas = ["", "cento", "duzentos", "trezentos", "quatrocentos", "quinhentos", "seiscentos", "setecentos", "oitocentos", "novecentos"];
+  if (n === 0) return "";
+  if (n === 100) return "cem";
+  const c = Math.floor(n / 100), r = n % 100;
+  const partes = [];
+  if (c > 0) partes.push(centenas[c]);
+  if (r > 0) {
+    if (r < 10) partes.push(unidades[r]);
+    else if (r < 20) partes.push(dez19[r - 10]);
+    else {
+      const d = Math.floor(r / 10), u = r % 10;
+      partes.push(u > 0 ? dezenas[d] + " e " + unidades[u] : dezenas[d]);
+    }
+  }
+  return partes.join(" e ");
+}
+function inteiroExtenso(n) {
+  if (n === 0) return "zero";
+  const milhoes = Math.floor(n / 1000000);
+  const milhares = Math.floor((n % 1000000) / 1000);
+  const unid = n % 1000;
+  const partes = [];
+  if (milhoes > 0) partes.push(grupo3Extenso(milhoes) + (milhoes === 1 ? " milhão" : " milhões"));
+  if (milhares > 0) partes.push((milhares === 1 ? "mil" : grupo3Extenso(milhares) + " mil"));
+  if (unid > 0) partes.push(grupo3Extenso(unid));
+  if (partes.length === 0) return "zero";
+  if (partes.length === 1) return partes[0];
+  const last = partes.pop();
+  return partes.join(", ") + " e " + last;
+}
+function valorPorExtenso(valor) {
+  const v = Math.round((Number(valor) || 0) * 100) / 100;
+  const inteiro = Math.floor(v);
+  const centavos = Math.round((v - inteiro) * 100);
+  let str = inteiroExtenso(inteiro) + (inteiro === 1 ? " real" : " reais");
+  if (centavos > 0) str += " e " + inteiroExtenso(centavos) + (centavos === 1 ? " centavo" : " centavos");
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
 /* ================= Icons (simple custom line icons, 24x24) ================= */
 function icon(name, size) {
   size = size || 16;
@@ -275,6 +328,7 @@ let UI = {
   folhaYear: new Date().getFullYear(),
   modal: null,
 };
+let RECIBO_ATUAL = null;
 
 function setState(mutator) {
   mutator(STATE);
@@ -467,6 +521,27 @@ function formExtrato() {
     '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
     '<button class="fin-btn fin-btn-ghost" data-action="close-modal">Cancelar</button>' +
     '<button class="fin-btn fin-btn-accent" data-action="submit-extrato">Adicionar</button></div>'
+  );
+}
+
+function formRecibo(d) {
+  d = d || {};
+  return (
+    fieldWrap("Recebedor / Favorecido (quem está sendo pago)", '<input class="fin-input" id="f-reciboRecebedor" value="' + esc(d.recebedor || "") + '" placeholder="Nome da pessoa ou empresa">') +
+    fieldWrap("CPF/CNPJ do recebedor (opcional)", '<input class="fin-input" id="f-reciboDocumento" value="' + esc(d.documento || "") + '">') +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+    fieldWrap("Valor (R$)", '<input class="fin-input" type="number" id="f-reciboValor" value="' + esc(d.valor || "") + '">') +
+    fieldWrap("Data", '<input class="fin-input" type="date" id="f-reciboData" value="' + (d.data || todayStr()) + '">') +
+    '</div>' +
+    fieldWrap("Referente a", '<input class="fin-input" id="f-reciboDescricao" value="' + esc(d.descricao || "") + '" placeholder="Descrição do pagamento">') +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+    fieldWrap("Forma de pagamento", '<select class="fin-input" id="f-reciboForma">' + FORMAS_PAGAMENTO.map((f) => '<option' + (f === d.formaPagamento ? " selected" : "") + '>' + f + '</option>').join("") + '</select>') +
+    fieldWrap("Pagador (quem está pagando)", '<input class="fin-input" id="f-reciboPagador" value="' + esc(d.pagador || (STATE.empresa && STATE.empresa.nome) || "") + '">') +
+    '</div>' +
+    fieldWrap("Cidade", '<input class="fin-input" id="f-reciboCidade" placeholder="Ex: Salvador/BA">') +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+    '<button class="fin-btn fin-btn-ghost" data-action="close-modal">Cancelar</button>' +
+    '<button class="fin-btn fin-btn-accent" data-action="submit-recibo">Gerar recibo</button></div>'
   );
 }
 
@@ -759,6 +834,7 @@ function renderContasPagar() {
         '<td style="text-align:right;white-space:nowrap">' + (status !== "pago" ?
           '<button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="open-modal-baixa-pagar" data-id="' + c.id + '">Dar baixa</button>' :
           '<button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="estornar-pagar" data-id="' + c.id + '">Estornar</button>') +
+        '<button class="fin-btn fin-btn-ghost fin-btn-sm" style="margin-left:6px" data-action="open-modal-recibo-pagar" data-id="' + c.id + '">' + icon("fileText", 13) + ' Recibo</button>' +
         '<button class="fin-btn fin-btn-ghost fin-btn-sm" style="margin-left:6px" data-action="remove-pagar" data-id="' + c.id + '">' + icon("trash", 13) + '</button></td></tr>';
     }).join("") + '</tbody></table>';
 
@@ -876,7 +952,8 @@ function renderConciliacao() {
         '<td style="color:' + (e.tipo === "saida" ? "var(--negative)" : "var(--positive)") + '">' + fmtBRL(e.valor) + '</td>' +
         '<td><select class="fin-input" style="min-width:180px" data-onchange="conciliar" data-id="' + e.id + '" data-tipo="' + e.tipo + '">' +
         '<option value="">' + (e.conciliadoId ? "Desvincular" : "Não conciliado") + '</option>' + opts + '</select></td>' +
-        '<td style="text-align:right"><button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="remove-extrato" data-id="' + e.id + '">' + icon("trash", 13) + '</button></td></tr>';
+        '<td style="text-align:right;white-space:nowrap"><button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="open-modal-recibo-extrato" data-id="' + e.id + '">' + icon("fileText", 13) + ' Recibo</button>' +
+        '<button class="fin-btn fin-btn-ghost fin-btn-sm" style="margin-left:6px" data-action="remove-extrato" data-id="' + e.id + '">' + icon("trash", 13) + '</button></td></tr>';
     }).join("") + '</tbody></table>';
 
   return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">' +
@@ -1232,6 +1309,7 @@ function renderModal() {
   if (m.type === "extrato") return modalWrap("Lançar linha do extrato", formExtrato());
   if (m.type === "lancar-folha") return modalWrap("Lançar custos de obra em Contas a Pagar", formLancarFolha(m.total, m.mes, m.ano));
   if (m.type === "ajuste") return modalWrap("Lançar variável do mês", formAjuste(m.mes, m.ano));
+  if (m.type === "recibo-form") return modalWrap("Gerar recibo", formRecibo(m.defaults));
   if (m.type === "empresa") return modalWrap("Nome da empresa", formEmpresa());
   if (m.type === "saldo-inicial") return modalWrap("Editar saldo inicial", formSaldoInicial());
   return "";
@@ -1239,26 +1317,71 @@ function renderModal() {
 
 function renderLoginScreen() {
   return '<div class="login-screen"><div class="login-card">' +
-    '<div style="text-align:center;margin-bottom:22px">' +
-    '<img src="' + LOGO_TRIADE + '" alt="Tríade" style="height:64px;width:auto;margin-bottom:8px">' +
-    '<div class="fin-display" style="font-size:16px;font-weight:700;color:var(--ink)">Financeiro Tríade</div></div>' +
+    '<div class="login-logo-panel">' +
+    '<img src="' + LOGO_TRIADE + '" alt="Tríade" style="height:88px;width:auto;display:block">' +
+    '</div>' +
+    '<div class="login-body">' +
+    '<div class="fin-display" style="font-size:15px;font-weight:700;color:var(--ink);text-align:center;margin-bottom:20px;letter-spacing:0.02em">FINANCEIRO TRÍADE</div>' +
     fieldWrap("E-mail", '<input class="fin-input" type="email" id="f-loginEmail" autocomplete="username">') +
     fieldWrap("Senha", '<input class="fin-input" type="password" id="f-loginSenha" autocomplete="current-password">') +
-    (AUTH_ERROR ? '<div style="background:#FBEEEA;color:var(--negative);padding:8px 12px;border-radius:5px;font-size:12px;margin-bottom:12px">' + esc(AUTH_ERROR) + '</div>' : '') +
-    '<button id="login-submit-btn" class="fin-btn fin-btn-accent" style="width:100%;justify-content:center;margin-top:4px" data-action="submit-login">Entrar</button>' +
-    '</div></div>';
+    (AUTH_ERROR ? '<div style="background:#FBEEEA;color:var(--negative);padding:9px 12px;border-radius:8px;font-size:12px;margin-bottom:14px">' + esc(AUTH_ERROR) + '</div>' : '') +
+    '<button id="login-submit-btn" class="fin-btn fin-btn-accent" style="width:100%;justify-content:center;margin-top:4px;padding:11px 15px;font-size:14px" data-action="submit-login">Entrar</button>' +
+    '</div></div></div>';
 }
 function renderLoadingScreen(msg) {
   return '<div class="login-screen"><div style="color:var(--ink-soft);font-size:13px">' + esc(msg) + '</div></div>';
 }
 function renderNaoConfiguradoScreen() {
-  return '<div class="login-screen"><div class="login-card" style="max-width:440px;text-align:left">' +
-    '<div style="text-align:center;margin-bottom:16px">' +
-    '<img src="' + LOGO_TRIADE + '" alt="Tríade" style="height:56px;width:auto;margin-bottom:8px"></div>' +
+  return '<div class="login-screen"><div class="login-card" style="max-width:460px">' +
+    '<div class="login-logo-panel" style="padding:28px 32px 20px">' +
+    '<img src="' + LOGO_TRIADE + '" alt="Tríade" style="height:64px;width:auto;display:block">' +
+    '</div>' +
+    '<div class="login-body" style="text-align:left">' +
     '<h3 class="fin-display" style="font-size:16px;font-weight:700;margin:0 0 10px">Supabase ainda não configurado</h3>' +
     '<p style="font-size:13px;color:var(--ink-soft);line-height:1.5;margin:0 0 8px">Este arquivo ainda tem os valores de exemplo no lugar da URL e da chave do Supabase.</p>' +
     '<p style="font-size:13px;color:var(--ink-soft);line-height:1.5;margin:0">Edite o <code>index.html</code>, procure por <code>SUPABASE_URL</code> e <code>SUPABASE_ANON_KEY</code> perto do início do bloco <code>&lt;script&gt;</code>, cole os valores do seu projeto (Project Settings → API) e suba o arquivo novamente.</p>' +
-    '</div></div>';
+    '</div></div></div>';
+}
+
+function renderReciboPreview(d) {
+  const extenso = valorPorExtenso(d.valor);
+  const dataFmt = fmtDate(d.data);
+  const cidadeLinha = (d.cidade ? esc(d.cidade) + ", " : "") + (d.data ? new Date(d.data + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" }) : "");
+  return (
+    '<div style="min-height:100vh;background:var(--bg);padding:32px 16px">' +
+    '<div class="no-print" style="max-width:640px;margin:0 auto 16px;display:flex;justify-content:space-between;align-items:center">' +
+    '<button class="fin-btn fin-btn-ghost" data-action="fechar-recibo">' + icon("chevronLeft", 14) + ' Voltar</button>' +
+    '<button class="fin-btn fin-btn-accent" onclick="window.print()">' + icon("printer", 14) + ' Baixar / Imprimir PDF</button>' +
+    '</div>' +
+    '<div class="fin-card" style="max-width:640px;margin:0 auto;padding:0">' +
+    '<div style="height:8px;background:linear-gradient(90deg,var(--accent),var(--accent-dark))"></div>' +
+    '<div style="padding:40px 44px">' +
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px">' +
+    '<div class="fin-display" style="font-size:26px;font-weight:700;letter-spacing:0.04em">RECIBO</div>' +
+    '<div style="text-align:right;font-size:12px;color:var(--ink-soft)">Data<br><strong style="color:var(--ink);font-size:14px">' + dataFmt + '</strong></div>' +
+    '</div>' +
+    '<div style="background:var(--accent-soft);border-radius:12px;padding:18px 22px;margin-bottom:26px;text-align:center">' +
+    '<div class="fin-label" style="margin-bottom:4px">Valor</div>' +
+    '<div class="fin-display" style="font-size:32px;font-weight:700;color:var(--accent-dark)">' + fmtBRL(d.valor) + '</div>' +
+    '<div style="font-size:12px;color:var(--ink-soft);margin-top:4px;font-style:italic">(' + esc(extenso) + ')</div>' +
+    '</div>' +
+    '<p style="font-size:14.5px;line-height:1.8;color:var(--ink);margin:0 0 26px">' +
+    'Recebi de <strong>' + esc(d.pagador || "________________________") + '</strong> a quantia de <strong>' + fmtBRL(d.valor) + '</strong>' +
+    (d.descricao ? ', referente a <strong>' + esc(d.descricao) + '</strong>' : '') +
+    (d.formaPagamento ? ', paga via <strong>' + esc(d.formaPagamento) + '</strong>' : '') + '.' +
+    '</p>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:36px;padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)">' +
+    '<div><div class="fin-label">Recebedor</div><div style="font-size:13.5px;font-weight:600">' + esc(d.recebedor) + '</div></div>' +
+    (d.documento ? '<div><div class="fin-label">CPF/CNPJ</div><div style="font-size:13.5px;font-weight:600">' + esc(d.documento) + '</div></div>' : '<div></div>') +
+    '</div>' +
+    '<div style="text-align:center;color:var(--ink-soft);font-size:13px;margin-bottom:40px">' + cidadeLinha + '</div>' +
+    '<div style="text-align:center">' +
+    '<div style="border-top:1px solid var(--ink);width:280px;margin:0 auto 8px"></div>' +
+    '<div style="font-size:13.5px;font-weight:600">' + esc(d.recebedor) + '</div>' +
+    (d.documento ? '<div style="font-size:12px;color:var(--ink-soft)">' + esc(d.documento) + '</div>' : '') +
+    '</div>' +
+    '</div></div></div>'
+  );
 }
 
 function render() {
@@ -1266,6 +1389,7 @@ function render() {
   if (AUTH_STATUS === "checking") { document.getElementById("root").innerHTML = renderLoadingScreen("Verificando sessão..."); return; }
   if (AUTH_STATUS === "loggedOut") { document.getElementById("root").innerHTML = renderLoginScreen(); return; }
   if (!STATE) { document.getElementById("root").innerHTML = renderLoadingScreen("Carregando dados..."); return; }
+  if (RECIBO_ATUAL) { document.getElementById("root").innerHTML = renderReciboPreview(RECIBO_ATUAL); return; }
 
   const nav = TABS.map((t) => '<div class="fin-nav-item ' + (UI.tab === t.id ? "active" : "") + '" data-action="tab" data-id="' + t.id + '">' + icon(t.icon, 16) + " " + t.label + '</div>').join("");
   const html =
@@ -1370,6 +1494,12 @@ function handleClick(action, el) {
   if (action === "estornar-pagar") { setState((s) => { s.contasPagar = s.contasPagar.map((c) => c.id === id ? Object.assign({}, c, { dataPagamento: null }) : c); }); return; }
   if (action === "estornar-receber") { setState((s) => { s.contasReceber = s.contasReceber.map((c) => c.id === id ? Object.assign({}, c, { dataRecebimento: null }) : c); }); return; }
   if (action === "remove-pagar") { setState((s) => { s.contasPagar = s.contasPagar.filter((c) => c.id !== id); }); return; }
+  if (action === "open-modal-recibo-pagar") {
+    const c = STATE.contasPagar.find((x) => x.id === id);
+    if (!c) return;
+    UI.modal = { type: "recibo-form", defaults: { recebedor: c.fornecedor || "", valor: Math.abs(Number(c.valor) || 0), data: c.dataPagamento || c.dataVencimento || todayStr(), descricao: c.descricao || "", formaPagamento: c.formaPagamento || "" } };
+    render(); return;
+  }
   if (action === "remove-receber") { setState((s) => { s.contasReceber = s.contasReceber.filter((c) => c.id !== id); }); return; }
 
   if (action === "open-modal-novo-fixo") { UI.modal = { type: "novo-fixo" }; render(); return; }
@@ -1410,6 +1540,12 @@ function handleClick(action, el) {
     UI.modal = null; render(); return;
   }
   if (action === "remove-extrato") { setState((s) => { s.extrato = s.extrato.filter((e) => e.id !== id); }); return; }
+  if (action === "open-modal-recibo-extrato") {
+    const e = STATE.extrato.find((x) => x.id === id);
+    if (!e) return;
+    UI.modal = { type: "recibo-form", defaults: { recebedor: e.descricao || "", valor: Math.abs(Number(e.valor) || 0), data: e.data || todayStr(), descricao: e.descricao || "", formaPagamento: "" } };
+    render(); return;
+  }
 
   if (action === "open-modal-cadastro") { UI.modal = { type: "cadastro", tipo: tipo }; render(); return; }
   if (action === "submit-fornecedor" || action === "submit-cliente") {
@@ -1478,6 +1614,18 @@ function handleClick(action, el) {
     setState((s) => { s.empresa = { nome: val("f-empresaNome") }; });
     UI.modal = null; render(); return;
   }
+
+  if (action === "submit-recibo") {
+    const recebedor = val("f-reciboRecebedor"), valor = val("f-reciboValor");
+    if (!recebedor || !valor) return;
+    RECIBO_ATUAL = {
+      recebedor: recebedor, documento: val("f-reciboDocumento"), valor: Number(valor) || 0,
+      data: val("f-reciboData"), descricao: val("f-reciboDescricao"), formaPagamento: val("f-reciboForma"),
+      pagador: val("f-reciboPagador"), cidade: val("f-reciboCidade"),
+    };
+    UI.modal = null; render(); return;
+  }
+  if (action === "fechar-recibo") { RECIBO_ATUAL = null; render(); return; }
 
   if (action === "submit-login") {
     const email = val("f-loginEmail"), senha = val("f-loginSenha");
