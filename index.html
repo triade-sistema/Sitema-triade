@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Financeiro Obras</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap');
   :root{
     --bg:#EDF2EE; --surface:#FFFFFF; --ink:#17321D; --ink-soft:#5C6E62; --line:#E0E6E1;
     --accent:#1C9B3C; --accent-dark:#145A2A; --accent-soft:#E9F7EC;
@@ -102,6 +102,64 @@ function esc(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+/* ================= CRM (Comercial: clientes e visitas) — helpers ================= */
+function crmDiasLabel(iso) {
+  if (!iso) return "";
+  const hoje = todayStr();
+  const diff = (new Date(iso + "T00:00:00") - new Date(hoje + "T00:00:00")) / 86400000;
+  if (diff === 0) return "hoje";
+  if (diff === 1) return "amanhã";
+  if (diff === -1) return "ontem";
+  if (diff < 0) return "há " + Math.abs(diff) + " dias";
+  return "em " + diff + " dias";
+}
+function crmSleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+async function crmGeocodeAddress(address) {
+  const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=br&q=" + encodeURIComponent(address);
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error("Falha na consulta de geolocalização");
+  const data = await res.json();
+  if (data && data[0]) return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+  return null;
+}
+function crmHaversineKm(a, b) {
+  const R = 6371;
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLng = (b.lng - a.lng) * Math.PI / 180;
+  const lat1 = a.lat * Math.PI / 180, lat2 = b.lat * Math.PI / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function crmOptimizeRoute(points) {
+  if (points.length <= 2) return points;
+  const remaining = points.slice();
+  const route = [remaining.shift()];
+  while (remaining.length) {
+    const last = route[route.length - 1];
+    let bestIdx = 0, bestDist = Infinity;
+    remaining.forEach((p, idx) => { const d = crmHaversineKm(last, p); if (d < bestDist) { bestDist = d; bestIdx = idx; } });
+    route.push(remaining.splice(bestIdx, 1)[0]);
+  }
+  return route;
+}
+function crmBuildGoogleMapsRouteUrl(points) {
+  if (!points || points.length === 0) return "";
+  const c = (p) => p.lat + "," + p.lng;
+  const origin = c(points[0]), destination = c(points[points.length - 1]);
+  const middle = points.slice(1, -1).map(c);
+  let url = "https://www.google.com/maps/dir/?api=1&origin=" + origin + "&destination=" + destination + "&travelmode=driving";
+  if (middle.length) url += "&waypoints=" + encodeURIComponent(middle.join("|"));
+  return url;
+}
+function crmBuildGoogleMapsSearchUrl(address) { return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(address); }
+const CRM_STATUS_META = {
+  pendente: { label: "Pendente", cls: "fin-badge-pendente" },
+  feito: { label: "Concluída", cls: "fin-badge-ativa" },
+  remarcado: { label: "Remarcada", cls: "fin-badge-encerrada" },
+  cancelado: { label: "Cancelada", cls: "fin-badge-atrasado" },
+};
+const CRM_TIPO_META = { ligacao: { label: "Ligação", emoji: "📞" }, visita: { label: "Visita", emoji: "📅" } };
+
 const EMPTY_DATA = {
   empresa: { nome: "Tríade" },
   obras: [],
@@ -114,6 +172,8 @@ const EMPTY_DATA = {
   ajustes: [],
   ferias: [],
   trabalhadores: [],
+  crmClientes: [],
+  crmTarefas: [],
   saldoInicial: { valor: 0, data: todayStr() },
   __v: 2,
 };
@@ -144,6 +204,8 @@ function migrate(raw) {
       ajustes: raw.ajustes || [],
       ferias: raw.ferias || [],
       trabalhadores: raw.trabalhadores || [],
+      crmClientes: raw.crmClientes || [],
+      crmTarefas: raw.crmTarefas || [],
       saldoInicial: raw.saldoInicial || { valor: 0, data: todayStr() },
     });
   }
@@ -371,9 +433,16 @@ let UI = {
   fixoSub: "funcionarios",
   feriasCalMonth: new Date().getMonth(),
   feriasCalYear: new Date().getFullYear(),
+  crmSub: "clientes",
+  crmSearch: "",
+  crmSelectedId: null,
+  crmAgendaFiltro: "hoje",
+  crmRemarcandoId: null,
+  crmRemarcarData: "",
   modal: null,
 };
 let RECIBO_ATUAL = null;
+let CRM_ROUTE = { data: todayStr(), raio: 8, status: "idle", resultado: null, erro: "" };
 
 function setState(mutator) {
   mutator(STATE);
@@ -1060,6 +1129,311 @@ function EquipeFixaTab() {
     (UI.fixoSub === "ferias" ? renderFeriasTab() : renderFuncionariosDP());
 }
 
+/* ================= Comercial (Carteira de Clientes e Visitas) ================= */
+function crmClientesFiltrados() {
+  const q = (UI.crmSearch || "").trim().toLowerCase();
+  if (!q) return STATE.crmClientes;
+  return STATE.crmClientes.filter((c) => [c.nome, c.responsavel, c.email].concat(c.telefones || []).filter(Boolean).some((v) => v.toLowerCase().includes(q)));
+}
+
+function crmClientListHtml() {
+  const lista = crmClientesFiltrados();
+  if (lista.length === 0) return '<div style="padding:30px 16px;text-align:center;color:var(--ink-soft);font-size:13px">Nenhum cliente encontrado.</div>';
+  return lista.map((c) => '<div style="padding:12px 16px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;' +
+    (UI.crmSelectedId === c.id ? "background:var(--accent-soft)" : "") + '" data-action="crm-select-cliente" data-id="' + c.id + '">' +
+    '<div><div style="font-weight:600;font-size:14px;margin-bottom:2px">' + esc(c.nome) + '</div>' +
+    '<div style="font-size:12px;color:var(--ink-soft)">' + esc(c.responsavel || "sem responsável") + '</div></div>' +
+    '<span style="color:var(--ink-soft)">›</span></div>').join("");
+}
+
+function renderCrmClientesView() {
+  return '<div style="display:grid;grid-template-columns:320px 1fr;gap:16px;align-items:start">' +
+    '<div class="fin-card">' +
+    '<div style="padding:14px 16px 12px;border-bottom:1px solid var(--line)">' +
+    '<input class="fin-input" id="crm-search-input" placeholder="Buscar por nome, responsável, telefone…" value="' + esc(UI.crmSearch) + '" oninput="crmHandleSearch(this.value)">' +
+    '<button class="fin-btn fin-btn-accent" style="width:100%;justify-content:center;margin-top:10px" data-action="open-modal-crm-cliente">' + icon("plus", 14) + ' Novo cliente</button></div>' +
+    '<div id="crm-client-list" style="max-height:560px;overflow-y:auto">' + crmClientListHtml() + '</div></div>' +
+    '<div class="fin-card" style="padding:24px;min-height:340px">' + renderCrmClienteDetail() + '</div></div>';
+}
+
+function renderCrmClienteDetail() {
+  const cliente = STATE.crmClientes.find((c) => c.id === UI.crmSelectedId);
+  if (!cliente) return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:340px;color:var(--ink-soft);gap:10px;text-align:center">' +
+    '<div style="font-size:38px">🏢</div><div>Selecione um cliente na lista para ver os detalhes,<br>ou cadastre um novo.</div></div>';
+
+  const historico = STATE.crmTarefas.filter((t) => t.clienteId === cliente.id).sort((a, b) => (a.data < b.data ? 1 : -1));
+  const telefonesHtml = (cliente.telefones || []).filter(Boolean).length ? (cliente.telefones || []).filter(Boolean).map((t) => '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:14px">' + esc(t) + '</span>').join("<br>") : "—";
+  const enderecoHtml = cliente.endereco ? '<div style="margin-bottom:18px">' +
+    '<div class="fin-label">📍 Endereço</div><div style="font-size:14.5px;margin-bottom:6px">' + esc(cliente.endereco) + '</div>' +
+    '<a href="' + crmBuildGoogleMapsSearchUrl(cliente.endereco) + '" target="_blank" rel="noreferrer" style="color:var(--accent-dark);font-size:12.5px;font-weight:600;text-decoration:none">🧭 Abrir no Google Maps</a>' +
+    (cliente.lat != null && cliente.geocodedEndereco === cliente.endereco ? ' <span style="color:var(--positive);font-size:11.5px;font-weight:600;margin-left:8px">✓ localizado para o roteiro</span>' : "") + '</div>' : "";
+  const observacoesHtml = cliente.observacoes ? '<div class="fin-label">🗒️ Observações</div><div style="background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:13.5px;white-space:pre-wrap;margin-bottom:18px">' + esc(cliente.observacoes) + '</div>' : "";
+  const historicoHtml = historico.length === 0 ? '<div style="padding:14px 0;color:var(--ink-soft);font-size:13px">Nenhuma tarefa registrada ainda para este cliente.</div>' :
+    historico.map((t) => {
+      const meta = CRM_STATUS_META[t.status]; const tipoMeta = CRM_TIPO_META[t.tipo] || CRM_TIPO_META.ligacao;
+      return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px">' +
+        '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:12.5px;color:var(--ink-soft);min-width:78px">' + fmtDate(t.data) + '</span>' +
+        '<span>' + tipoMeta.emoji + '</span><span style="flex:1">' + esc(t.notas || tipoMeta.label) + '</span>' +
+        '<span class="fin-badge ' + meta.cls + '">' + meta.label + '</span></div>';
+    }).join("");
+
+  return '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px">' +
+    '<div class="fin-display" style="font-weight:700;font-size:21px">' + esc(cliente.nome) + '</div>' +
+    '<div style="display:flex;gap:6px">' +
+    '<button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="open-modal-crm-cliente" data-id="' + cliente.id + '">Editar</button>' +
+    '<button class="fin-btn fin-btn-danger fin-btn-sm" data-action="crm-excluir-cliente" data-id="' + cliente.id + '">Excluir</button></div></div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:18px">' +
+    '<div><div class="fin-label">👤 Responsável</div><div style="font-size:14.5px">' + esc(cliente.responsavel || "—") + '</div></div>' +
+    '<div><div class="fin-label">✉️ E-mail</div><div style="font-size:14.5px">' + esc(cliente.email || "—") + '</div></div>' +
+    '<div><div class="fin-label">📞 Telefones</div><div style="font-size:14.5px">' + telefonesHtml + '</div></div></div>' +
+    enderecoHtml + observacoesHtml +
+    '<div class="fin-display" style="font-weight:600;font-size:14px;margin:22px 0 10px">📞 Follow-up deste cliente</div>' +
+    '<button class="fin-btn fin-btn-ghost" style="background:var(--accent-soft);color:var(--accent-dark);border:none;margin-bottom:10px" data-action="open-modal-crm-tarefa" data-id="' + cliente.id + '">+ Agendar ligação / visita</button>' +
+    '<div>' + historicoHtml + '</div>';
+}
+
+function crmHandleSearch(v) {
+  UI.crmSearch = v;
+  const el = document.getElementById("crm-client-list");
+  if (el) el.innerHTML = crmClientListHtml();
+}
+
+function crmComputeAvisosDistancia(m) {
+  if (!m.clienteId || !m.data) return null;
+  const atual = STATE.crmClientes.find((c) => c.id === m.clienteId);
+  if (!atual || atual.lat == null || atual.geocodedEndereco !== atual.endereco) return null;
+  const outros = STATE.crmTarefas.filter((t) => t.status === "pendente" && t.data === m.data && t.clienteId !== m.clienteId && t.id !== m.tarefaId);
+  const vistos = new Set(); const itens = [];
+  outros.forEach((t) => {
+    const c = STATE.crmClientes.find((x) => x.id === t.clienteId);
+    if (!c || c.lat == null || c.geocodedEndereco !== c.endereco || vistos.has(c.id)) return;
+    vistos.add(c.id);
+    itens.push({ nome: c.nome, km: crmHaversineKm(atual, c) });
+  });
+  return itens.length === 0 ? null : itens.sort((a, b) => a.km - b.km);
+}
+function crmAvisosHtml(avisos) {
+  if (!avisos) return "";
+  return '<div style="background:var(--accent-soft);border-radius:9px;padding:10px 12px;font-size:12.5px;margin-top:4px">' +
+    '<div style="font-weight:700;margin-bottom:4px">Já existem visitas nesta data para:</div>' +
+    avisos.map((a) => '<div style="display:flex;justify-content:space-between;padding:3px 0' + (a.km > 8 ? ";color:var(--negative);font-weight:700" : "") + '">' +
+      '<span>' + esc(a.nome) + '</span><span>' + a.km.toFixed(1) + " km" + (a.km > 8 ? " — considere remarcar" : "") + '</span></div>').join("") + '</div>';
+}
+function formCrmTarefa(m) {
+  const avisos = crmComputeAvisosDistancia(m);
+  return (
+    fieldWrap("Cliente *", '<select class="fin-input" id="crm-tarefa-cliente" data-onchange="crm-tarefa-cliente"><option value="">Selecione…</option>' +
+      STATE.crmClientes.map((c) => '<option value="' + c.id + '"' + (m.clienteId === c.id ? " selected" : "") + '>' + esc(c.nome) + '</option>').join("") + '</select>') +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+    fieldWrap("Data *", '<input class="fin-input" type="date" id="crm-tarefa-data" data-onchange="crm-tarefa-data" value="' + (m.data || todayStr()) + '">') +
+    fieldWrap("Tipo", '<select class="fin-input" id="crm-tarefa-tipo"><option value="ligacao"' + (m.tipo === "ligacao" ? " selected" : "") + '>Ligação</option><option value="visita"' + (m.tipo === "visita" ? " selected" : "") + '>Visita</option></select>') +
+    '</div>' +
+    fieldWrap("Notas", '<textarea class="fin-input" id="crm-tarefa-notas" style="min-height:70px;resize:vertical" placeholder="Ex: ligar para confirmar horário da visita">' + esc(m.notas || "") + '</textarea>') +
+    '<div id="crm-avisos-box">' + crmAvisosHtml(avisos) + '</div>' +
+    '<div id="crm-tarefa-erro" style="color:var(--negative);font-size:13px;margin:10px 0"></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+    '<button class="fin-btn fin-btn-ghost" data-action="close-modal">Cancelar</button>' +
+    '<button class="fin-btn fin-btn-accent" data-action="submit-crm-tarefa">Agendar</button></div>'
+  );
+}
+
+/* ---------- Agenda & Roteiro ---------- */
+function crmGetContadores() {
+  const hoje = todayStr();
+  const pendentes = STATE.crmTarefas.filter((t) => t.status === "pendente");
+  return {
+    atrasadas: pendentes.filter((t) => t.data < hoje).length,
+    hoje: pendentes.filter((t) => t.data === hoje).length,
+    proximas: pendentes.filter((t) => t.data > hoje).length,
+    concluidas: STATE.crmTarefas.filter((t) => t.status === "feito").length,
+  };
+}
+function crmGetTarefasAgenda() {
+  const hoje = todayStr();
+  let list = [];
+  if (UI.crmAgendaFiltro === "atrasadas") list = STATE.crmTarefas.filter((t) => t.status === "pendente" && t.data < hoje);
+  else if (UI.crmAgendaFiltro === "hoje") list = STATE.crmTarefas.filter((t) => t.status === "pendente" && t.data === hoje);
+  else if (UI.crmAgendaFiltro === "proximas") list = STATE.crmTarefas.filter((t) => t.status === "pendente" && t.data > hoje);
+  else if (UI.crmAgendaFiltro === "concluidas") list = STATE.crmTarefas.filter((t) => t.status === "feito");
+  else list = STATE.crmTarefas;
+  return list.map((t) => Object.assign({}, t, { cliente: STATE.crmClientes.find((c) => c.id === t.clienteId) })).sort((a, b) => (a.data < b.data ? -1 : 1));
+}
+
+function renderCrmAgendaChips() {
+  const c = crmGetContadores();
+  const chips = [
+    { id: "atrasadas", label: "Atrasadas", count: c.atrasadas },
+    { id: "hoje", label: "Hoje", count: c.hoje },
+    { id: "proximas", label: "Próximas", count: c.proximas },
+    { id: "concluidas", label: "Concluídas", count: c.concluidas },
+    { id: "todas", label: "Todas", count: null },
+  ];
+  return '<div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap">' + chips.map((chip) =>
+    '<button class="fin-pill ' + (UI.crmAgendaFiltro === chip.id ? "active" : "") + '" data-action="crm-agenda-filtro" data-id="' + chip.id + '">' +
+    chip.label + (chip.count !== null ? ' <span style="opacity:0.7">(' + chip.count + ')</span>' : "") + '</button>').join("") + '</div>';
+}
+
+function renderCrmAgendaQueue() {
+  const tarefas = crmGetTarefasAgenda().filter((t) => t.cliente);
+  const hoje = todayStr();
+  if (tarefas.length === 0) return emptyState("wallet", "Nenhuma tarefa nesta visão.");
+  return '<div style="display:flex;flex-direction:column;gap:12px">' + tarefas.map((t) => {
+    const meta = CRM_STATUS_META[t.status];
+    const atrasada = t.status === "pendente" && t.data < hoje;
+    const tipoMeta = CRM_TIPO_META[t.tipo] || CRM_TIPO_META.ligacao;
+    const phonesHtml = (t.cliente.telefones || []).filter(Boolean).map((tel) => '<span style="background:var(--accent-soft);color:var(--accent-dark);font-family:\'IBM Plex Mono\',monospace;font-size:13px;font-weight:600;padding:6px 10px;border-radius:8px;margin-right:6px;display:inline-block">📞 ' + esc(tel) + '</span>').join("");
+    const enderecoHtml = t.cliente.endereco ? '<div style="margin-bottom:8px"><a href="' + crmBuildGoogleMapsSearchUrl(t.cliente.endereco) + '" target="_blank" rel="noreferrer" style="color:var(--accent-dark);font-size:12.5px;font-weight:600;text-decoration:none">📍 ' + esc(t.cliente.endereco) + '</a></div>' : "";
+    let actionsHtml;
+    if (t.status === "pendente") {
+      actionsHtml = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+        '<button class="fin-btn fin-btn-ghost fin-btn-sm" style="color:var(--positive)" data-action="crm-concluir-tarefa" data-id="' + t.id + '">✓ Concluir</button>' +
+        (UI.crmRemarcandoId === t.id ?
+          '<input class="fin-input" type="date" id="crm-remarcar-input-' + t.id + '" value="' + esc(UI.crmRemarcarData || t.data) + '" style="width:150px">' +
+          '<button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="crm-confirmar-remarcar" data-id="' + t.id + '">Confirmar</button>' +
+          '<button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="crm-cancelar-remarcar-ui">✕</button>' :
+          '<button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="crm-iniciar-remarcar" data-id="' + t.id + '">↺ Remarcar</button>') +
+        '<button class="fin-btn fin-btn-ghost fin-btn-sm" style="color:var(--negative)" data-action="crm-cancelar-tarefa" data-id="' + t.id + '">🚫 Cancelar</button></div>';
+    } else {
+      actionsHtml = '<span class="fin-badge ' + meta.cls + '">' + meta.label + '</span>';
+    }
+    return '<div class="fin-card" style="padding:16px 18px;border-left:4px solid ' + (atrasada ? "var(--negative)" : "var(--accent)") + '">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px">' +
+      '<div><div class="fin-display" style="font-weight:700;font-size:16px">' + esc(t.cliente.nome) + '</div>' +
+      '<div style="font-size:12.5px;color:var(--ink-soft);margin-top:2px">' + tipoMeta.emoji + " " + tipoMeta.label + " · " + esc(t.cliente.responsavel || "sem responsável") + '</div></div>' +
+      '<div style="text-align:right"><div style="font-family:\'IBM Plex Mono\',monospace;font-weight:600;font-size:13px">' + fmtDate(t.data) + '</div>' +
+      '<div style="font-size:11.5px;color:' + (atrasada ? "var(--negative)" : "var(--ink-soft)") + '">' + (atrasada ? "⚠️ " : "") + crmDiasLabel(t.data) + '</div></div></div>' +
+      (phonesHtml ? '<div style="margin:10px 0">' + phonesHtml + '</div>' : "") + enderecoHtml +
+      (t.notas ? '<div style="font-size:13px;color:var(--ink-soft);background:var(--bg);border-radius:8px;padding:8px 10px;margin-bottom:10px">' + esc(t.notas) + '</div>' : "") +
+      actionsHtml + '</div>';
+  }).join("") + '</div>';
+}
+
+function renderCrmRoutePanel() {
+  const tarefasDoDia = STATE.crmTarefas.filter((t) => t.status === "pendente" && t.data === CRM_ROUTE.data);
+  let resultadoHtml = "";
+  if (CRM_ROUTE.erro) resultadoHtml += '<div style="background:#FBEEEA;color:var(--negative);border-radius:9px;padding:10px 12px;font-size:12.5px;margin-bottom:10px">' + esc(CRM_ROUTE.erro) + '</div>';
+  if (CRM_ROUTE.resultado) {
+    const r = CRM_ROUTE.resultado;
+    if (r.semEndereco.length) resultadoHtml += '<div style="background:#FCF3DF;color:var(--warn);border-radius:9px;padding:10px 12px;font-size:12.5px;margin-bottom:10px">Sem endereço cadastrado: ' + esc(r.semEndereco.join(", ")) + '.</div>';
+    if (r.falharam.length) resultadoHtml += '<div style="background:#FBEEEA;color:var(--negative);border-radius:9px;padding:10px 12px;font-size:12.5px;margin-bottom:10px">Não localizamos o endereço de: ' + esc(r.falharam.join(", ")) + '.</div>';
+    if (r.ordenados.length > 0) {
+      resultadoHtml += r.ordenados.map((p, i) => {
+        let leg = "";
+        if (r.pernas[i] !== undefined) {
+          const alerta = r.pernas[i] > CRM_ROUTE.raio;
+          leg = '<div style="font-size:12px;color:' + (alerta ? "var(--negative);font-weight:700" : "var(--ink-soft)") + ';padding:4px 0 4px 34px">' + (alerta ? "⚠️" : "🧭") + " " + r.pernas[i].toFixed(1) + " km até a próxima parada" + (alerta ? " — muito distante" : "") + '</div>';
+        }
+        return '<div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px dashed var(--line)">' +
+          '<div style="width:24px;height:24px;border-radius:50%;background:var(--ink);color:#fff;font-family:\'IBM Plex Mono\',monospace;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">' + (i + 1) + '</div>' +
+          '<div><div style="font-weight:700;font-size:13.5px">' + esc(p.nome) + '</div><div style="font-size:12px;color:var(--ink-soft)">' + esc(p.endereco) + '</div></div></div>' + leg;
+      }).join("") +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:13.5px;font-weight:700">' +
+      '<span>Distância total estimada (linha reta)</span><span>' + r.total.toFixed(1) + ' km</span></div>' +
+      '<button class="fin-btn fin-btn-accent" style="margin-top:14px" onclick="window.open(\'' + crmBuildGoogleMapsRouteUrl(r.ordenados) + '\',\'_blank\')">🧭 Abrir roteiro otimizado no Google Maps</button>';
+    }
+  }
+  return '<div class="fin-card" style="padding:18px;margin-bottom:20px">' +
+    '<div class="fin-display" style="font-weight:700;font-size:15px;margin-bottom:4px">🛣️ Roteiro de visitas do dia</div>' +
+    '<div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:14px">Calcula a melhor ordem de visita com base no endereço de cada cliente e avisa quando duas paradas do mesmo dia estiverem muito distantes entre si.</div>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin-bottom:14px">' +
+    '<div><label style="display:block;font-size:11px;font-weight:600;color:var(--ink-soft);margin-bottom:4px;text-transform:uppercase">Data</label>' +
+    '<input class="fin-input" type="date" id="crm-route-data" data-onchange="crm-route-data" value="' + CRM_ROUTE.data + '" style="width:150px"></div>' +
+    '<div><label style="display:block;font-size:11px;font-weight:600;color:var(--ink-soft);margin-bottom:4px;text-transform:uppercase">Alertar acima de (km)</label>' +
+    '<input class="fin-input" type="number" id="crm-route-raio" data-onchange="crm-route-raio" min="1" step="1" value="' + CRM_ROUTE.raio + '" style="width:80px"></div>' +
+    '<button class="fin-btn fin-btn-accent" data-action="crm-calcular-roteiro" ' + (tarefasDoDia.length === 0 || CRM_ROUTE.status === "loading" ? "disabled" : "") + '>' +
+    (CRM_ROUTE.status === "loading" ? "⏳ Calculando…" : "🧭 Calcular roteiro otimizado") + '</button>' +
+    '<span style="font-size:12.5px;color:var(--ink-soft)">' + tarefasDoDia.length + " visita(s) pendente(s) em " + fmtDate(CRM_ROUTE.data) + '</span></div>' +
+    resultadoHtml + '</div>';
+}
+
+async function crmCalcularRoteiro() {
+  CRM_ROUTE.status = "loading"; CRM_ROUTE.erro = ""; CRM_ROUTE.resultado = null;
+  render();
+  const tarefasDoDia = STATE.crmTarefas.filter((t) => t.status === "pendente" && t.data === CRM_ROUTE.data);
+  const semEndereco = [], falharam = [], pontos = [];
+  try {
+    for (const t of tarefasDoDia) {
+      const cliente = STATE.crmClientes.find((c) => c.id === t.clienteId);
+      if (!cliente) continue;
+      if (!cliente.endereco || !cliente.endereco.trim()) { semEndereco.push(cliente.nome); continue; }
+      let lat = cliente.lat, lng = cliente.lng;
+      const precisaGeocodificar = lat == null || lng == null || cliente.geocodedEndereco !== cliente.endereco;
+      if (precisaGeocodificar) {
+        const coords = await crmGeocodeAddress(cliente.endereco);
+        if (!coords) { falharam.push(cliente.nome); continue; }
+        lat = coords.lat; lng = coords.lng;
+        STATE.crmClientes = STATE.crmClientes.map((c) => c.id === cliente.id ? Object.assign({}, c, { lat: lat, lng: lng, geocodedEndereco: cliente.endereco }) : c);
+        scheduleSave();
+        await crmSleep(1100);
+      }
+      pontos.push({ clienteId: cliente.id, nome: cliente.nome, endereco: cliente.endereco, lat: lat, lng: lng });
+    }
+    if (pontos.length === 0) {
+      CRM_ROUTE.resultado = { ordenados: [], pernas: [], total: 0, semEndereco: semEndereco, falharam: falharam };
+      CRM_ROUTE.status = "done"; render(); return;
+    }
+    const ordenados = crmOptimizeRoute(pontos);
+    const pernas = [];
+    for (let i = 0; i < ordenados.length - 1; i++) pernas.push(crmHaversineKm(ordenados[i], ordenados[i + 1]));
+    const total = pernas.reduce((a, b) => a + b, 0);
+    CRM_ROUTE.resultado = { ordenados: ordenados, pernas: pernas, total: total, semEndereco: semEndereco, falharam: falharam };
+    CRM_ROUTE.status = "done";
+  } catch (e) {
+    CRM_ROUTE.erro = "Não foi possível consultar o serviço de geolocalização agora. Tente novamente em instantes.";
+    CRM_ROUTE.status = "error";
+  }
+  render();
+}
+
+function renderCrmAgendaView() {
+  return renderCrmRoutePanel() + renderCrmAgendaChips() + renderCrmAgendaQueue();
+}
+
+function crmLegadoDisponivel() {
+  try {
+    const c = JSON.parse(localStorage.getItem("crm_clientes_v1") || "[]");
+    return Array.isArray(c) && c.length > 0 && STATE.crmClientes.length === 0;
+  } catch (e) { return false; }
+}
+
+const CRM_SUBTABS = [{ id: "clientes", label: "Clientes" }, { id: "agenda", label: "Agenda & Roteiro" }];
+function ComercialTab() {
+  const hoje = todayStr();
+  const alertCount = STATE.crmTarefas.filter((t) => t.status === "pendente" && t.data <= hoje).length;
+  const pills = CRM_SUBTABS.map((t) => '<button class="fin-pill ' + (UI.crmSub === t.id ? "active" : "") + '" data-action="crm-sub" data-id="' + t.id + '">' + t.label +
+    (t.id === "agenda" && alertCount > 0 ? ' <span style="background:var(--negative);color:#fff;border-radius:99px;padding:1px 7px;font-size:11px;margin-left:4px">' + alertCount + '</span>' : "") + '</button>').join("");
+  const bannerImportacao = crmLegadoDisponivel() ? '<div class="fin-card" style="padding:14px 18px;margin-bottom:18px;border-left:4px solid var(--accent);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">' +
+    '<div style="font-size:13px">📦 Encontramos clientes cadastrados no sistema anterior (Carteira de Clientes), salvos neste navegador. Deseja importar para cá?</div>' +
+    '<button class="fin-btn fin-btn-accent fin-btn-sm" data-action="crm-importar-legado">Importar agora</button></div>' : "";
+  return '<h2 class="fin-display" style="font-size:20px;font-weight:600;margin-bottom:14px">Comercial — Carteira de Clientes</h2>' +
+    bannerImportacao +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">' + pills + '</div>' +
+    (UI.crmSub === "agenda" ? renderCrmAgendaView() : renderCrmClientesView());
+}
+
+function formCrmCliente(m) {
+  const c = m.dados || {};
+  const telefones = m.telefones || [""];
+  const phoneRows = telefones.map((tel, i) => '<div style="display:flex;gap:6px;margin-bottom:7px">' +
+    '<input class="fin-input" id="crm-tel-' + i + '" value="' + esc(tel) + '" placeholder="(71) 99999-9999">' +
+    (telefones.length > 1 ? '<button type="button" class="fin-btn fin-btn-ghost fin-btn-sm" data-action="crm-remove-telefone" data-idx="' + i + '">' + icon("x", 13) + '</button>' : "") + '</div>').join("");
+  const geoOk = c.lat != null && c.geocodedEndereco === c.endereco;
+  return (
+    fieldWrap("Nome da empresa *", '<input class="fin-input" id="crm-nome" value="' + esc(c.nome || "") + '" placeholder="Ex: Padaria Bom Sabor">') +
+    fieldWrap("Responsável na empresa", '<input class="fin-input" id="crm-responsavel" value="' + esc(c.responsavel || "") + '">') +
+    fieldWrap("E-mail", '<input class="fin-input" type="email" id="crm-email" value="' + esc(c.email || "") + '">') +
+    fieldWrap("Endereço completo", '<input class="fin-input" id="crm-endereco" value="' + esc(c.endereco || "") + '" placeholder="Rua, número - Bairro, Cidade - UF">' +
+      '<button type="button" class="fin-btn fin-btn-ghost fin-btn-sm" style="margin-top:8px" data-action="crm-geocode">📍 Localizar endereço no mapa</button>' +
+      '<div id="crm-geo-status" style="font-size:12px;margin-top:6px">' + (geoOk ? '<span style="color:var(--positive)">✓ Endereço localizado — pronto para o roteiro otimizado.</span>' : "") + '</div>') +
+    fieldWrap("Telefones / WhatsApp *", '<div>' + phoneRows + '</div><button type="button" class="fin-btn fin-btn-ghost fin-btn-sm" data-action="crm-add-telefone">+ Adicionar outro telefone</button>') +
+    fieldWrap("Observações", '<textarea class="fin-input" id="crm-observacoes" style="min-height:70px;resize:vertical">' + esc(c.observacoes || "") + '</textarea>') +
+    '<div id="crm-modal-erro" style="color:var(--negative);font-size:13px;margin-bottom:10px"></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+    '<button class="fin-btn fin-btn-ghost" data-action="close-modal">Cancelar</button>' +
+    '<button class="fin-btn fin-btn-accent" data-action="submit-crm-cliente">' + (c.id ? "Salvar alterações" : "Cadastrar cliente") + '</button></div>'
+  );
+}
+
 /* ================= Financeiro: Contas a Pagar ================= */
 function renderContasPagar() {
   const list = STATE.contasPagar
@@ -1531,6 +1905,7 @@ function handleImportarBackup(input) {
 /* ================= App shell ================= */
 const TABS = [
   { id: "dashboard", label: "Visão geral", icon: "dashboard" },
+  { id: "comercial", label: "Comercial", icon: "userCircle" },
   { id: "obras", label: "Obras", icon: "building" },
   { id: "fixos", label: "Equipe fixa", icon: "users" },
   { id: "financeiro", label: "Financeiro", icon: "landmark" },
@@ -1553,6 +1928,7 @@ function renderAuditoria() {
 }
 
 function renderTabContent() {
+  if (UI.tab === "comercial") return ComercialTab();
   if (UI.tab === "obras") return UI.obraSelecionada ? renderObraDetail(UI.obraSelecionada) : renderObrasList();
   if (UI.tab === "fixos") return EquipeFixaTab();
   if (UI.tab === "financeiro") return renderFinanceiro();
@@ -1584,6 +1960,8 @@ function renderModal() {
   if (m.type === "recibo-form") return modalWrap("Gerar recibo", formRecibo(m.defaults));
   if (m.type === "empresa") return modalWrap("Nome da empresa", formEmpresa());
   if (m.type === "saldo-inicial") return modalWrap("Editar saldo inicial", formSaldoInicial());
+  if (m.type === "crm-cliente-form") return modalWrap(m.dados && m.dados.id ? "Editar cliente" : "Novo cliente", formCrmCliente(m));
+  if (m.type === "crm-tarefa-form") return modalWrap("Agendar follow-up", formCrmTarefa(m));
   return "";
 }
 
@@ -2027,6 +2405,125 @@ function handleClick(action, el) {
   }
   if (action === "fechar-recibo") { RECIBO_ATUAL = null; render(); return; }
 
+  if (action === "crm-sub") { UI.crmSub = id; render(); return; }
+  if (action === "crm-select-cliente") { UI.crmSelectedId = id; render(); return; }
+  if (action === "open-modal-crm-cliente") {
+    const cliente = id ? STATE.crmClientes.find((c) => c.id === id) : null;
+    UI.modal = { type: "crm-cliente-form", dados: cliente || {}, telefones: cliente && cliente.telefones && cliente.telefones.length ? cliente.telefones.slice() : [""] };
+    render(); return;
+  }
+  if (action === "crm-add-telefone") { UI.modal.telefones.push(""); render(); return; }
+  if (action === "crm-remove-telefone") {
+    const idx = Number(el.getAttribute("data-idx"));
+    UI.modal.telefones.splice(idx, 1);
+    if (UI.modal.telefones.length === 0) UI.modal.telefones = [""];
+    render(); return;
+  }
+  if (action === "crm-geocode") {
+    const endereco = val("crm-endereco").trim();
+    const statusEl = document.getElementById("crm-geo-status");
+    if (!endereco) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--negative)">Informe um endereço antes de localizar.</span>'; return; }
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--ink-soft)">⏳ Localizando…</span>';
+    crmGeocodeAddress(endereco).then((coords) => {
+      if (!coords) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--negative)">Não conseguimos localizar esse endereço. Você ainda pode salvar o cliente.</span>'; return; }
+      UI.modal.dados = Object.assign({}, UI.modal.dados, { lat: coords.lat, lng: coords.lng, geocodedEndereco: endereco, endereco: endereco });
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--positive)">✓ Endereço localizado — pronto para o roteiro otimizado.</span>';
+    }).catch(() => { if (statusEl) statusEl.innerHTML = '<span style="color:var(--negative)">Falha ao consultar o serviço de geolocalização.</span>'; });
+    return;
+  }
+  if (action === "submit-crm-cliente") {
+    const nome = val("crm-nome").trim();
+    const errEl = document.getElementById("crm-modal-erro");
+    const telefones = UI.modal.telefones.map((_, i) => val("crm-tel-" + i).trim()).filter(Boolean);
+    if (!nome) { if (errEl) errEl.textContent = "Informe o nome do cliente."; return; }
+    if (telefones.length === 0) { if (errEl) errEl.textContent = "Informe ao menos um telefone/WhatsApp."; return; }
+    const enderecoLimpo = val("crm-endereco").trim();
+    const dadosAntigos = UI.modal.dados || {};
+    const manteveGeo = dadosAntigos.geocodedEndereco === enderecoLimpo;
+    const registro = {
+      id: dadosAntigos.id || uid(), nome: nome, responsavel: val("crm-responsavel").trim(), email: val("crm-email").trim(),
+      endereco: enderecoLimpo, observacoes: val("crm-observacoes").trim(), telefones: telefones,
+      lat: manteveGeo ? dadosAntigos.lat : undefined, lng: manteveGeo ? dadosAntigos.lng : undefined,
+      geocodedEndereco: manteveGeo ? dadosAntigos.geocodedEndereco : undefined, createdAt: dadosAntigos.createdAt || Date.now(),
+    };
+    const isEdicao = !!dadosAntigos.id;
+    setState((s) => {
+      if (isEdicao) s.crmClientes = s.crmClientes.map((c) => c.id === registro.id ? registro : c);
+      else { s.crmClientes = [registro].concat(s.crmClientes); UI.crmSelectedId = registro.id; }
+    });
+    registrarAuditoria(isEdicao ? "Editou cliente comercial" : "Criou cliente comercial", "Comercial", nome);
+    UI.modal = null; render(); return;
+  }
+  if (action === "crm-excluir-cliente") {
+    if (!confirm("Excluir este cliente? As tarefas de follow-up vinculadas a ele também serão removidas.")) return;
+    const nomeC = (STATE.crmClientes.find((c) => c.id === id) || {}).nome || "";
+    setState((s) => {
+      s.crmClientes = s.crmClientes.filter((c) => c.id !== id);
+      s.crmTarefas = s.crmTarefas.filter((t) => t.clienteId !== id);
+    });
+    if (UI.crmSelectedId === id) UI.crmSelectedId = null;
+    registrarAuditoria("Excluiu cliente comercial", "Comercial", nomeC);
+    render(); return;
+  }
+  if (action === "open-modal-crm-tarefa") { UI.modal = { type: "crm-tarefa-form", clienteId: id || "", data: todayStr(), tipo: "ligacao", notas: "" }; render(); return; }
+  if (action === "submit-crm-tarefa") {
+    const errEl = document.getElementById("crm-tarefa-erro");
+    const m = UI.modal;
+    if (!m.clienteId) { if (errEl) errEl.textContent = "Selecione o cliente."; return; }
+    if (!m.data) { if (errEl) errEl.textContent = "Selecione a data."; return; }
+    const notas = val("crm-tarefa-notas").trim();
+    const clienteNome = (STATE.crmClientes.find((c) => c.id === m.clienteId) || {}).nome || "";
+    setState((s) => { s.crmTarefas = [{ id: uid(), clienteId: m.clienteId, data: m.data, tipo: m.tipo, notas: notas, status: "pendente", createdAt: Date.now(), updatedAt: Date.now() }].concat(s.crmTarefas); });
+    registrarAuditoria("Agendou follow-up", "Comercial", clienteNome + " — " + fmtDate(m.data));
+    UI.modal = null; render(); return;
+  }
+  if (action === "crm-agenda-filtro") { UI.crmAgendaFiltro = id; render(); return; }
+  if (action === "crm-concluir-tarefa") {
+    setState((s) => { s.crmTarefas = s.crmTarefas.map((t) => t.id === id ? Object.assign({}, t, { status: "feito", updatedAt: Date.now() }) : t); });
+    registrarAuditoria("Concluiu follow-up", "Comercial", id);
+    return;
+  }
+  if (action === "crm-cancelar-tarefa") {
+    if (!confirm("Cancelar esta tarefa de follow-up?")) return;
+    setState((s) => { s.crmTarefas = s.crmTarefas.map((t) => t.id === id ? Object.assign({}, t, { status: "cancelado", updatedAt: Date.now() }) : t); });
+    registrarAuditoria("Cancelou follow-up", "Comercial", id);
+    return;
+  }
+  if (action === "crm-iniciar-remarcar") {
+    const t = STATE.crmTarefas.find((x) => x.id === id);
+    UI.crmRemarcandoId = id; UI.crmRemarcarData = t ? t.data : todayStr();
+    render(); return;
+  }
+  if (action === "crm-cancelar-remarcar-ui") { UI.crmRemarcandoId = null; render(); return; }
+  if (action === "crm-confirmar-remarcar") {
+    const input = document.getElementById("crm-remarcar-input-" + id);
+    const novaData = input ? input.value : UI.crmRemarcarData;
+    if (!novaData) return;
+    const original = STATE.crmTarefas.find((t) => t.id === id);
+    if (!original) return;
+    setState((s) => {
+      const nova = { id: uid(), clienteId: original.clienteId, tipo: original.tipo, data: novaData, notas: original.notas, status: "pendente", origemId: original.id, createdAt: Date.now(), updatedAt: Date.now() };
+      s.crmTarefas = s.crmTarefas.map((t) => t.id === id ? Object.assign({}, t, { status: "remarcado", updatedAt: Date.now() }) : t).concat(nova);
+    });
+    UI.crmRemarcandoId = null; UI.crmRemarcarData = "";
+    render(); return;
+  }
+  if (action === "crm-calcular-roteiro") { crmCalcularRoteiro(); return; }
+  if (action === "crm-importar-legado") {
+    let clientesLegado = [], tarefasLegado = [];
+    try {
+      clientesLegado = JSON.parse(localStorage.getItem("crm_clientes_v1") || "[]");
+      tarefasLegado = JSON.parse(localStorage.getItem("crm_tarefas_v1") || "[]");
+    } catch (e) { alert("Não foi possível ler os dados antigos deste navegador."); return; }
+    if (!confirm("Importar " + clientesLegado.length + " cliente(s) e " + tarefasLegado.length + " tarefa(s) do sistema anterior para cá?")) return;
+    setState((s) => {
+      s.crmClientes = clientesLegado.concat(s.crmClientes);
+      s.crmTarefas = tarefasLegado.concat(s.crmTarefas);
+    });
+    registrarAuditoria("Importou carteira de clientes antiga", "Comercial", clientesLegado.length + " clientes, " + tarefasLegado.length + " tarefas");
+    render(); return;
+  }
+
   if (action === "submit-login") {
     const email = val("f-loginEmail"), senha = val("f-loginSenha");
     if (!email || !senha) return;
@@ -2063,6 +2560,10 @@ function handleChange(action, el) {
   if (action === "folha-year") { UI.folhaYear = Number(value); render(); return; }
   if (action === "rel-tipo") { UI.relTipo = value; render(); return; }
   if (action === "rel-year") { UI.relYear = Number(value); render(); return; }
+  if (action === "crm-tarefa-cliente") { UI.modal.clienteId = value; render(); return; }
+  if (action === "crm-tarefa-data") { UI.modal.data = value; render(); return; }
+  if (action === "crm-route-data") { CRM_ROUTE.data = value; CRM_ROUTE.resultado = null; CRM_ROUTE.erro = ""; render(); return; }
+  if (action === "crm-route-raio") { CRM_ROUTE.raio = Number(value) || 1; render(); return; }
   if (action === "conciliar") {
     const linhaId = id, tipo = tipoAttr, contaId = value || null;
     setState((s) => {
