@@ -831,19 +831,40 @@ function renderDashboard() {
     if (ym[0] === proxAnoRef && ym[1] === proxMesRef) feriasAvisos.push({ nome: fe.funcionarioNome, data: p.dataInicio });
   }));
 
+  const hoje = todayStr();
+  const visitasHoje = (STATE.crmTarefas || []).filter((t) => t.status === "pendente" && t.data === hoje)
+    .map((t) => Object.assign({}, t, { cliente: STATE.crmClientes.find((c) => c.id === t.clienteId) })).filter((t) => t.cliente);
+  const visitasAtrasadas = (STATE.crmTarefas || []).filter((t) => t.status === "pendente" && t.data < hoje).length;
+
   let alertHtml = "";
-  if (atrasadasPagar.length || atrasadasReceber.length || vencendoPagar.length || feriasAvisos.length) {
+  if (atrasadasPagar.length || atrasadasReceber.length || vencendoPagar.length || feriasAvisos.length || visitasHoje.length || visitasAtrasadas) {
     let items = "";
     if (atrasadasPagar.length) items += "<li><strong style='color:var(--negative)'>" + atrasadasPagar.length + "</strong> conta(s) a pagar em atraso</li>";
     if (atrasadasReceber.length) items += "<li><strong style='color:var(--negative)'>" + atrasadasReceber.length + "</strong> conta(s) a receber em atraso</li>";
     if (vencendoPagar.length) items += "<li><strong>" + vencendoPagar.length + "</strong> conta(s) a pagar vencendo nos próximos 7 dias</li>";
+    if (visitasHoje.length) items += "<li><strong style='color:var(--accent-dark)'>" + visitasHoje.length + "</strong> ligação(ões)/visita(s) agendada(s) para hoje</li>";
+    if (visitasAtrasadas) items += "<li><strong style='color:var(--negative)'>" + visitasAtrasadas + "</strong> follow-up(s) comercial(is) atrasado(s)</li>";
     feriasAvisos.forEach((a) => { items += "<li>Funcionário <strong>" + esc(a.nome) + "</strong> sairá de férias em <strong>" + fmtDate(a.data) + "</strong></li>"; });
     alertHtml = '<div class="fin-card" style="padding:14px 18px;margin-bottom:18px;border-left:4px solid var(--warn)">' +
       '<div style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;margin-bottom:6px">' + icon("alertTriangle", 16) + ' Alertas</div>' +
       '<ul style="margin:0;padding-left:20px;font-size:13px;color:var(--ink-soft)">' + items + '</ul></div>';
   }
 
-  return alertHtml +
+  const visitasHojeCard = visitasHoje.length === 0 ? "" : '<div class="fin-card" style="padding:18px;margin-bottom:22px">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">' +
+    '<div class="fin-display" style="font-weight:700;font-size:15px">📅 Visitas e ligações de hoje</div>' +
+    '<button class="fin-btn fin-btn-ghost fin-btn-sm" data-action="tab" data-id="comercial">Ver agenda completa</button></div>' +
+    visitasHoje.map((t) => {
+      const tipoMeta = CRM_TIPO_META[t.tipo] || CRM_TIPO_META.ligacao;
+      const phonesHtml = (t.cliente.telefones || []).filter(Boolean).map((tel) => '<span style="background:var(--accent-soft);color:var(--accent-dark);font-family:\'IBM Plex Mono\',monospace;font-size:12.5px;font-weight:600;padding:4px 9px;border-radius:7px;margin-right:6px;display:inline-block">📞 ' + esc(tel) + '</span>').join("");
+      return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)">' +
+        '<div><div style="font-weight:600;font-size:13.5px">' + tipoMeta.emoji + " " + esc(t.cliente.nome) + '</div>' +
+        '<div style="margin-top:4px">' + (phonesHtml || '<span style="font-size:12px;color:var(--ink-soft)">sem telefone cadastrado</span>') + '</div>' +
+        (t.notas ? '<div style="font-size:12px;color:var(--ink-soft);margin-top:4px">' + esc(t.notas) + '</div>' : "") + '</div>' +
+        '<button class="fin-btn fin-btn-ghost fin-btn-sm" style="color:var(--positive);flex-shrink:0" data-action="crm-concluir-tarefa" data-id="' + t.id + '">✓ Concluir</button></div>';
+    }).join("") + '</div>';
+
+  return alertHtml + visitasHojeCard +
     '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px">' +
     statCard("Recebido este mês", fmtBRL(recMes), "positive") +
     statCard("Pago este mês", fmtBRL(custoMes), "negative") +
